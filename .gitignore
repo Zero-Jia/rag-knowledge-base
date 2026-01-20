@@ -1,13 +1,11 @@
-# Python cache
+# Python
 __pycache__/
 *.pyc
+*.pyo
 
-# Environment
-.env
-
-# Database
+# Runtime data
 *.db
+storage/
 
-# Virtual environment (if any)
-venv/
-.env/
+# Env
+.env

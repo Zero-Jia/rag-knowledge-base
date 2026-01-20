@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from app.database import engine,Base
-from app.models import user # from app.models import user 是为了让 User 这个 model 被 import 到内存里，否则 metadata 里可能没表
-from app.routers import health,users,auth
+from app.models import user,document # from app.models import user 是为了让 User 这个 model 被 import 到内存里，否则 metadata 里可能没表
+from app.routers import health,users,auth,documents
 
 # 创建一个FastAPI应用实例，名字叫app
 app = FastAPI(
@@ -15,6 +15,7 @@ Base.metadata.create_all(bind=engine)
 app.include_router(health.router)
 app.include_router(users.router)
 app.include_router(auth.router)
+app.include_router(documents.router)
 '''
 # 例子解释：
 # app.get("/ping")：当有人用 HTTP GET 方法访问 /ping 这个路径时，把请求交给下面这个函数处理。
