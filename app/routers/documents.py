@@ -3,6 +3,7 @@ import os
 from fastapi import APIRouter,UploadFile,File,Depends,HTTPException
 from sqlalchemy.orm import Session
 
+from app.services.document_parser import parse_document
 from app.database import get_db
 from app.models.document import Document
 from app.security import get_current_user
@@ -53,4 +54,32 @@ def upload_document(
         "id":doc.id,
         "filename":doc.filename,
         "message":"Upload successful",
+    }
+
+@router.get("/{document_id}/text")
+def get_document_text(
+    document_id:int,
+    db:Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    doc = (
+        db.query(Document)
+        .filter(Document.id == document_id,Document.user_id == current_user.id)
+        .first()
+    )
+    if not doc:
+        raise HTTPException(status_code=404,detail="Document not found")
+    
+    try: 
+        text = parse_document(doc.file_path,doc.content_type)
+    except ValueError as e:
+        raise HTTPException(status_code=415,detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500,detail=f"Parse failed: {e}")
+    
+    return {
+        "document_id":doc.id,
+        "content_type":doc.content_type,
+        "text_preview":text[:1000],
+        "text_length":len(text),
     }

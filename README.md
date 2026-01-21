@@ -6,6 +6,10 @@ This project is a backend service for a Retrieval-Augmented Generation (RAG) bas
 It focuses on a practical foundation that will later connect document ingestion, vector retrieval, and LLMs.
 The current implementation delivers a working FastAPI API with user management, authentication, and a local database.
 
+models 定义的是：数据库里“有什么表、有什么字段、表和表怎么关联” 
+schemas 定义的是：接口“允许接收什么 / 返回什么” 
+routers 定义的是：“当客户端请求某个 URL 时，系统该做什么” 
+
 ---
 
 ## Tech Stack
