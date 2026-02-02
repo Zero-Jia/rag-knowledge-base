@@ -1,61 +1,19 @@
 # 文件上传 router（核心）
 import os
-from fastapi import APIRouter,UploadFile,File,Depends,HTTPException,Query
+import shutil
+from fastapi import APIRouter,UploadFile,File,Depends,HTTPException,Query,BackgroundTasks
 from sqlalchemy.orm import Session
 
 from app.services.text_processing import process_text
 from app.services.document_parser import parse_document
+from app.services.indexing_service import index_document_pipeline
 from app.database import get_db
-from app.models.document import Document
+from app.models.document import Document,DocumentStatus
 from app.security import get_current_user
 
 UPLOAD_ROOT = "storage/uploads"
 
 router = APIRouter(prefix="/documents",tags=["documents"])
-
-@router.post("/upload")
-def upload_document(
-    file:UploadFile = File(...),
-    db:Session = Depends(get_db),
-    current_user = Depends(get_current_user),
-):
-    if not file.filename:
-        raise HTTPException(status_code=400,detail="Empty filename")
-    
-    # 1) 先落库拿到 doc.id
-    doc = Document(
-        user_id = current_user.id,
-        filename = file.filename,
-        content_type = file.content_type or "application/octet-stream",
-        file_path = "",
-    )
-    db.add(doc)
-    db.commit()
-    db.refresh(doc)
-
-    # 2) 构造目录
-    user_dir = os.path.join(UPLOAD_ROOT,str(current_user.id))
-    doc_dir = os.path.join(user_dir,str(doc.id))
-    os.makedirs(doc_dir,exist_ok=True)
-
-    file_path = os.path.join(doc_dir,file.filename)
-
-    # 3) 写入磁盘
-    try:
-        with open(file_path,"wb") as f:
-            f.write(file.file.read())
-    except Exception:
-        raise HTTPException(status_code=500,detail="Failed to save file")
-    
-    # 4) 更新 file_path
-    doc.file_path = file_path
-    db.commit()
-
-    return{
-        "id":doc.id,
-        "filename":doc.filename,
-        "message":"Upload successful",
-    }
 
 @router.get("/{document_id}/text")
 def get_document_text(
@@ -123,4 +81,56 @@ def get_document_chunks(
         "overlap": overlap,
         "chunk_count": len(chunks),
         "chunks_preview": chunks[:3]
+    }
+
+@router.post("/upload")
+def upload_document(
+    background_tasks:BackgroundTasks,
+    file:UploadFile = File(...),
+    db:Session =  Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Empty filename")
+    
+    os.makedirs(UPLOAD_ROOT,exist_ok=True)
+
+    # 1) 先落库拿 doc.id
+    doc = Document(
+        user_id = current_user.id,
+        filename = file.filename,
+        content_type = file.content_type or "application/octet-stream",
+        file_path = "",
+        status = DocumentStatus.PENDING,
+    )
+    db.add(doc)
+    db.commit()
+    db.refresh(doc)
+    # 2) 保存文件到磁盘（用 doc.id 组织目录/文件名）
+    save_path = os.path.join(UPLOAD_ROOT,f"{doc.id}_{file.filename}")
+    with open(save_path,"wb") as f:
+        shutil.copyfileobj(file.file,f)
+    # 3) 更新 file_path
+    doc.file_path = save_path
+    db.commit()
+    # 4) 触发后台索引（立刻返回，不阻塞）
+    background_tasks.add_task(index_document_pipeline,doc.id)
+    return {
+        "document_id":doc.id,
+        "status":doc.status.value,
+        "message":"uploaded, indexing started"
+    }
+
+@router.get("/{document_id}/status")
+def get_document_status(document_id:int,db:Session = Depends(get_db),current_user = Depends(get_current_user),):
+    doc = db.query(Document).filter(
+        Document.id == document_id,
+        Document.user_id == current_user.id
+    ).first()
+
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return {
+        "document_id": doc.id,
+        "status": doc.status.value
     }
