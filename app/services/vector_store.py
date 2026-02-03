@@ -2,7 +2,8 @@
 from __future__ import annotations
 from typing import Any,Dict,List,Optional
 import chromadb
-from chromadb.config import Settings
+import os
+import uuid
 
 class VectorStore:
     """
@@ -13,12 +14,8 @@ class VectorStore:
         persist_dir:str = "storage/chroma",
         collection_name:str = "document_chunks",
     ):
-        self.client = chromadb.Client(
-            Settings(
-                persist_directory = persist_dir,
-                anonymized_telemetry = False,
-            )
-        )
+        os.makedirs(persist_dir,exist_ok=True)
+        self.client = chromadb.PersistentClient(path=persist_dir)
         self.collection = self.client.get_or_create_collection(name=collection_name)
     
     def add_texts(
@@ -28,13 +25,16 @@ class VectorStore:
         metadatas:Optional[List[Dict[str,Any]]],
         ids:Optional[List[str]] = None,
     )-> None:
+        # metadatas 允许 None，就给默认空 dict
+        if metadatas is None:
+            metadatas = [{} for _ in texts]
+
         if len(texts)!=len(embeddings) or len(texts) != len(metadatas):
             raise ValueError("texts / embeddings / metadatas 长度必须一致")
         
         if ids is None:
-            # ⚠️ 真实项目里不建议用 chunk_0, chunk_1（不同文档会撞 id）
-            # 下面只是为了 Day 8 本地验证先跑起来
-            ids = [f"chunk_{i}" for i in range(len(texts))]
+            # ✅ 防撞：uuid
+            ids = [str(uuid.uuid4()) for _ in texts]
         
         self.collection.add(
             documents=texts,
