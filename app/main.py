@@ -2,12 +2,16 @@ from fastapi import FastAPI
 from app.database import engine,Base
 from app.models import user,document # from app.models import user 是为了让 User 这个 model 被 import 到内存里，否则 metadata 里可能没表
 from app.routers import health,users,auth,documents,search,chat
+from app.middleware.rate_limit import rate_limit_middleware
 
 # 创建一个FastAPI应用实例，名字叫app
 app = FastAPI(
     title="RAG Knowledge Base backend",
     version="0.1.0",
 )
+
+# 注册 Middleware
+app.middleware("http")(rate_limit_middleware)
 
 Base.metadata.create_all(bind=engine)
 

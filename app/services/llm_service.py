@@ -8,6 +8,11 @@ class LLMServiceError(RuntimeError):
     """统一的 LLM 异常类型，方便上层处理"""
     pass
 
+# ✅ Day13：统一配置（工程化）
+MAX_RETRIES = 3
+BASE_DELAY = 1
+TIMEOUT_SECONDS = 20
+
 def _create_client()->OpenAI:
     """
     创建 LLM Client（DeepSeek / OpenAI 通用）
@@ -31,10 +36,11 @@ def _create_client()->OpenAI:
 def generate_answer(
         messages:List[Dict[str,str]],
         temperature:float=0.2,
-        max_retries:int = 2,
+        max_retries:int = MAX_RETRIES,
+        timeout:int = TIMEOUT_SECONDS, # 超时参数
 )->str:
     """
-    调用 DeepSeek Chat API 生成回答，非流式调用，返回完整答案（保留，兼容旧接口）
+    调用 DeepSeek Chat API 生成回答，非流式调用，返回完整答案（有限重试 + 指数退避 + 超时）
     """
     client = _create_client()
     model = os.getenv("OPENAI_MODEL")
@@ -47,55 +53,47 @@ def generate_answer(
                 model = model,
                 messages=messages,
                 temperature=temperature,
+                timeout=timeout,
             )
             return response.choices[0].message.content.strip()
         except Exception as e:
             last_error = e
-            # 简单指数退避
-            time.sleep(0.8*(2**attempt))
+            if attempt < max_retries:
+                # 简单指数退避
+                time.sleep(0.8*(2**attempt))
+                continue
     
-    raise LLMServiceError(f"DeepSeek API failed: {last_error}")
+    raise LLMServiceError(f"DeepSeek API failed after retries: {last_error}")
 
 def stream_answer(
         messages:List[Dict[str,str]],
         temperature:float=0.2,
-        max_retries:int = 0,
+        timeout:int = TIMEOUT_SECONDS,
 )->Iterator[str]:
     """
-    ✅ 新增：流式调用，逐段 yield 输出内容（token/chunk）
-
-    作用：
-    - 给 Day12 的 /chat/stream 用
-    - 后端不拼接全文，客户端自己拼接
-    - 中途异常也用 yield 输出，保证不断流
+    ✅ Day13：流式调用（工程取舍：不做复杂重试）
+    - 流式中途失败很难“无缝续上”，所以只做一次调用
+    - 失败就 yield 清晰错误给前端（不断流）
     """
     client = _create_client()
     model = os.getenv("OPENAI_MODEL")
 
     last_error:Optional[Exception] = None
 
-    for attempt in range(max_retries+1):
-        try:
-            stream = client.chat.completions.create(
-                model = model,
-                messages=messages,
-                temperature=temperature,
-                stream=True,
-            )
+    try:
+        stream = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            stream=True,
+            timeout=timeout,  # ✅ Day13：关键改动（超时）
+        )
 
-            for chunk in stream:
-                # DeepSeek(OpenAI-compatible) 流式 chunk：choices[0].delta.content
-                delta = chunk.choices[0].delta
-                if delta and getattr(delta,"content",None):
-                    yield delta.content
-            
-            return
-        except Exception as e:
-            last_error = e
-            if attempt<max_retries:
-                time.sleep(0.8*(2**attempt))
-                continue
+        for chunk in stream:
+            delta = chunk.choices[0].delta
+            if delta and getattr(delta, "content", None):
+                yield delta.content
 
-            # 最后一次仍失败：把错误“流”出去(便于前端看到)
-            yield f"\n[ERROR]: {str(e)}"
-            return
+    except Exception:
+        yield "\n[ERROR]: LLM service unavailable, please retry later."
+        return
