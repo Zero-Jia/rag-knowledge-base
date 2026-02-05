@@ -1,14 +1,44 @@
-from fastapi import FastAPI
+import uuid
+import time
+import logging
+
+from fastapi import FastAPI,Request
 from app.database import engine,Base
 from app.models import user,document # from app.models import user 是为了让 User 这个 model 被 import 到内存里，否则 metadata 里可能没表
 from app.routers import health,users,auth,documents,search,chat,search_hybrid,search_rerank
 from app.middleware.rate_limit import rate_limit_middleware
+from app.logging_config import setup_logging
+from app.services.request_context import set_request_id
+
+# 设置日志
+setup_logging()
 
 # 创建一个FastAPI应用实例，名字叫app
 app = FastAPI(
     title="RAG Knowledge Base backend",
     version="0.1.0",
 )
+
+# 请求级日志 + request_id 串联整条链路
+api_logger = logging.getLogger("api")
+
+@app.middleware("http")
+async def request_log_middleware(request:Request,call_next):
+    rid = uuid.uuid4().hex[:8]
+    set_request_id(rid)
+
+    start = time.time()
+    api_logger.info(f"request start | rid={rid} | {request.method} {request.url.path}")
+
+    try:
+        resp = await call_next(request)
+        elapsed = time.time()-start
+        api_logger.info(f"request done  | rid={rid} | status={resp.status_code} | time={elapsed:.3f}s")
+        return resp
+    except Exception as e:
+        elapsed = time.time()-start
+        api_logger.error(f"request fail  | rid={rid} | time={elapsed:.3f}s | error={e}")
+        raise
 
 # 注册 Middleware
 app.middleware("http")(rate_limit_middleware)
