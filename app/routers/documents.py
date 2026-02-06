@@ -1,7 +1,7 @@
 # 文件上传 router（核心）
 import os
 import shutil
-from fastapi import APIRouter,UploadFile,File,Depends,HTTPException,Query,BackgroundTasks
+from fastapi import APIRouter,UploadFile,File,Depends,HTTPException,Query,BackgroundTasks,Request
 from sqlalchemy.orm import Session
 
 from app.services.text_processing import process_text
@@ -10,6 +10,8 @@ from app.services.indexing_service import index_document_pipeline
 from app.database import get_db
 from app.models.document import Document,DocumentStatus
 from app.security import get_current_user
+from app.schemas.common import APIResponse
+from app.exceptions import AppError
 
 UPLOAD_ROOT = "storage/uploads"
 
@@ -122,15 +124,22 @@ def upload_document(
     }
 
 @router.get("/{document_id}/status")
-def get_document_status(document_id:int,db:Session = Depends(get_db),current_user = Depends(get_current_user),):
+def get_document_status(
+    document_id:int,
+    request:Request,
+    db:Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
     doc = db.query(Document).filter(
         Document.id == document_id,
         Document.user_id == current_user.id
     ).first()
 
     if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
-    return {
-        "document_id": doc.id,
-        "status": doc.status.value
-    }
+        raise AppError("DOC_NOT_FOUND", "Document not found", 404)
+    # 成功返回统一结构（success/data/error/trace_id）
+    return APIResponse(
+        success=True,
+        data={"document_id": doc.id, "status": doc.status.value},
+        trace_id=getattr(request.state, "trace_id", None),
+    )
