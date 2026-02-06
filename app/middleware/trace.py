@@ -1,9 +1,20 @@
-# Trace ID 中间件
 import uuid
 from fastapi import Request
 
-async def trace_id_middleware(request:Request,call_next):
-    request.state.trace_id = uuid.uuid4().hex[:12]
-    response = await call_next(request)
-    response.headers["X-Trace-Id"] = request.state.trace_id
-    return response
+TRACE_HEADER = "X-Trace-Id"
+
+async def trace_id_middleware(request: Request, call_next):
+    # ✅ 1) 优先使用上游传来的 Trace-Id（方便链路追踪）
+    incoming = request.headers.get(TRACE_HEADER)
+
+    trace_id = (incoming or uuid.uuid4().hex)[:12]
+    request.state.trace_id = trace_id
+
+    # ✅ 2) 确保响应一定有 X-Trace-Id
+    response = None
+    try:
+        response = await call_next(request)
+        return response
+    finally:
+        if response is not None:
+            response.headers[TRACE_HEADER] = trace_id
