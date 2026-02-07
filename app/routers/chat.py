@@ -15,10 +15,104 @@ from app.exceptions import AppError
 router = APIRouter(prefix="/chat", tags=["chat"])
 logger = logging.getLogger("api.chat")
 
+
 class ChatRequest(BaseModel):
     question: str = Field(..., min_length=1)
 
-@router.post("/", response_model=APIResponse)
+
+@router.post(
+    "/",
+    summary="Chat with RAG (non-streaming)",
+    description=(
+        "Generate an answer using Retrieval-Augmented Generation (RAG).\n\n"
+        "- Auth required\n"
+        "- Request body contains `question`\n"
+        "- Response is wrapped in `APIResponse` with `{question, answer}`"
+    ),
+    response_model=APIResponse,
+    responses={
+        200: {
+            "description": "Chat answer (APIResponse)",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "success": True,
+                        "data": {
+                            "question": "什么是深度学习？",
+                            "answer": "深度学习是机器学习的一个分支，通常通过多层神经网络从数据中自动学习特征……",
+                        },
+                        "error": None,
+                        "trace_id": "a1b2c3d4e5f6",
+                    }
+                }
+            },
+        },
+        400: {
+            "description": "Bad request (empty question)",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "success": False,
+                        "data": None,
+                        "error": {
+                            "code": "EMPTY_QUESTION",
+                            "message": "question cannot be empty",
+                            "details": None,
+                        },
+                        "trace_id": "badf00d00001",
+                    }
+                }
+            },
+        },
+        401: {
+            "description": "Unauthorized (missing/invalid token)",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "success": False,
+                        "data": None,
+                        "error": {"code": "UNAUTHORIZED", "message": "Not authenticated", "details": None},
+                        "trace_id": "cafe1234dead",
+                    }
+                }
+            },
+        },
+        503: {
+            "description": "LLM upstream service failed",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "success": False,
+                        "data": None,
+                        "error": {
+                            "code": "LLM_UPSTREAM_ERROR",
+                            "message": "LLM service failed",
+                            "details": "Upstream timeout",
+                        },
+                        "trace_id": "deadbeef0001",
+                    }
+                }
+            },
+        },
+        500: {
+            "description": "Internal chat error",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "success": False,
+                        "data": None,
+                        "error": {
+                            "code": "CHAT_INTERNAL_ERROR",
+                            "message": "Internal chat error",
+                            "details": "Unexpected error",
+                        },
+                        "trace_id": "deadbeef0002",
+                    }
+                }
+            },
+        },
+    },
+)
 def chat_api(
     req: ChatRequest,
     request: Request,
@@ -52,7 +146,9 @@ def chat_api(
 
     except LLMServiceError as e:
         elapsed = time.time() - start
-        logger.error(f"/chat llm_error | rid={rid} | user={current_user.id} | time={elapsed:.3f}s | error={e}")
+        logger.error(
+            f"/chat llm_error | rid={rid} | user={current_user.id} | time={elapsed:.3f}s | error={e}"
+        )
         # ✅ 交给全局 handler 统一 JSON
         raise AppError(
             code="LLM_UPSTREAM_ERROR",
@@ -75,8 +171,46 @@ def chat_api(
             details=str(e),
         )
 
-@router.post("/stream")
-def chat_stream_api(req: ChatRequest, current_user=Depends(get_current_user)):
+
+@router.post(
+    "/stream",
+    summary="Chat with RAG (streaming)",
+    description=(
+        "Stream answer tokens progressively (non-JSON streaming).\n\n"
+        "- Auth required\n"
+        "- Request body contains `question`\n"
+        "- Response is `text/plain` stream (NOT wrapped in `APIResponse`)\n"
+        "- Frontend should read chunks incrementally (e.g. fetch + ReadableStream)"
+    ),
+    responses={
+        200: {
+            "description": "Plain text streaming response",
+            "content": {
+                "text/plain": {
+                    "example": (
+                        "深度学习是机器学习的一个分支，\n"
+                        "通常通过多层神经网络学习特征。\n"
+                        "[DONE]\n"
+                    )
+                }
+            },
+        },
+        401: {
+            "description": "Unauthorized (missing/invalid token)",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "Not authenticated"
+                    }
+                }
+            },
+        },
+    },
+)
+def chat_stream_api(
+    req: ChatRequest,
+    current_user=Depends(get_current_user),
+):
     """
     流式接口保持 text/plain（不包 APIResponse）
     Day19 的“统一返回结构”优先覆盖非流式核心接口

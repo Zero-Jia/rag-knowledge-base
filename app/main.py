@@ -3,6 +3,7 @@ import logging
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 
 from app.database import engine, Base
 from app.models import user, document
@@ -20,7 +21,40 @@ setup_logging()
 app = FastAPI(
     title="RAG Knowledge Base backend",
     version="0.1.0",
+    summary="Backend API for document upload, indexing, search and RAG chat.",
+    description=(
+        "Workflow: Register/Login → Upload → Check Status → Search → Chat.\n\n"
+        "Auth: Use `Authorization: Bearer <token>` for protected endpoints."
+    ),
 )
+
+
+# OpenAPI 增强（让 /docs 显示 BearerAuth）
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        summary=app.summary,
+        description=app.description,
+        routes=app.routes,
+    )
+
+    # 声明 Bearer JWT 鉴权方案（Swagger 才会更清楚地展示🔒和鉴权方式）
+    schema.setdefault("components", {})
+    schema["components"].setdefault("securitySchemes", {})
+    schema["components"]["securitySchemes"]["BearerAuth"] = {
+        "type":"http",
+        "scheme":"bearer",
+        "bearerFormat":"JWT",
+    }
+    # 不强制全局上锁（否则 /auth/login 也会被锁）
+    app.openapi_schema = schema
+    return app.openapi_schema
+
+app.openapi = custom_openapi
 
 # CORS（为 React 预热）
 app.add_middleware(
@@ -31,10 +65,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ✅ 1) Trace ID 放最外层：保证任何异常都有 trace_id
+#  1) Trace ID 放最外层：保证任何异常都有 trace_id
 app.middleware("http")(trace_id_middleware)
 
-# ✅ 2) 请求级日志：直接复用 trace_id（避免两套 id）
+#  2) 请求级日志：直接复用 trace_id（避免两套 id）
 api_logger = logging.getLogger("api")
 
 @app.middleware("http")
@@ -57,10 +91,10 @@ async def request_log_middleware(request: Request, call_next):
         api_logger.error(f"request fail  | rid={rid} | time={elapsed:.3f}s | error={e}")
         raise
 
-# ✅ 3) rate limit 放在 log 之后：被限流也会有完整日志 + trace_id
+# 3) rate limit 放在 log 之后：被限流也会有完整日志 + trace_id
 app.middleware("http")(rate_limit_middleware)
 
-# ✅ 4) 注册全局异常 handler（输出统一 APIResponse）
+#  4) 注册全局异常 handler（输出统一 APIResponse）
 register_exception_handlers(app)
 
 # 建表
