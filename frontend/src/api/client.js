@@ -3,11 +3,19 @@ const API_BASE = "http://127.0.0.1:8000";
 export async function apiFetch(path, options = {}) {
   const token = localStorage.getItem("access_token");
 
+  // 先合并外部 headers + token
   const headers = {
-    "Content-Type": "application/json",
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...(options.headers || {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
+
+  // ✅ 只有在非 FormData 的情况下才默认加 JSON Content-Type
+  const isFormData =
+    typeof FormData !== "undefined" && options.body instanceof FormData;
+
+  if (!isFormData && !("Content-Type" in headers)) {
+    headers["Content-Type"] = "application/json";
+  }
 
   const resp = await fetch(`${API_BASE}${path}`, {
     ...options,
@@ -29,13 +37,14 @@ export async function apiFetch(path, options = {}) {
       const msg =
         payload?.error?.message ||
         payload?.error ||
+        payload?.detail ||
         `Request failed (${resp.status})`;
       throw new Error(msg);
     }
     return payload.data;
   }
 
-  // ✅ 如果你的 /auth/login 不是统一封装（直接返回 token），也能工作
+  // ✅ 兼容非统一封装接口（比如 /auth/login 直接返回 token）
   if (!resp.ok) {
     throw new Error(`Request failed (${resp.status})`);
   }

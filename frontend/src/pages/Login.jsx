@@ -14,22 +14,26 @@ export default function Login() {
     setMe(null);
 
     try {
+      // 🔐 调用登录接口
       const data = await login(username, password);
 
       // ✅ 兼容两种返回：
       // 1) { access_token: "..." }
-      // 2) { token: "..."}（如果你后端用了别的名字）
+      // 2) { token: "..." }
       const token = data?.access_token || data?.token;
       if (!token) throw new Error("No access_token in response");
 
+      // ✅ 保存 token
       localStorage.setItem("access_token", token);
 
       alert("Login success");
 
-      // ✅ 验收点 5：登录后立刻请求一个需要鉴权的接口
-      // 你可以把 /documents 换成你项目里任何“需要登录”的 GET 接口
+      // ✅ 验收点：调用一个需要鉴权的接口，确保 token 有效
       const docs = await apiFetch("/documents", { method: "GET" });
       setMe({ ok: true, preview: docs });
+
+      // 🔥 关键：强制刷新，让 App 重新读取 token
+      window.location.reload();
     } catch (err) {
       setError(err?.message || "Login failed");
     }
@@ -53,7 +57,9 @@ export default function Login() {
           onChange={(e) => setPassword(e.target.value)}
         />
 
-        <button type="submit">Login</button>
+        <button type="submit" disabled={!username || !password}>
+          Login
+        </button>
 
         {error && <p style={{ color: "red" }}>{error}</p>}
         {me && (
@@ -64,7 +70,7 @@ export default function Login() {
       </form>
 
       <div style={{ marginTop: 16, fontSize: 12, opacity: 0.7 }}>
-        Tip: 打开 DevTools → Application → Local Storage 看 access_token
+        Tip: 打开 DevTools → Application → Local Storage 查看 access_token
       </div>
     </div>
   );
