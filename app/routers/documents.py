@@ -18,7 +18,7 @@ Optional / Debug endpoints:
 
 Recommended frontend flow:
 1) POST /documents/upload  -> get document_id
-2) GET  /documents/{id}/status (poll) until indexed
+2) GET /documents/{id}/status (poll) until indexed
 3) POST /search or /chat using the indexed content
 
 Auth:
@@ -42,7 +42,53 @@ from app.exceptions import AppError
 
 UPLOAD_ROOT = "storage/uploads"
 
+# =========================
+# Day26 Task4: 文件大小限制
+# =========================
+MAX_FILE_SIZE = 10 * 1024 * 1024   # 10MB
+COPY_CHUNK_SIZE = 1024 * 1024      # 1MB
+
 router = APIRouter(prefix="/documents", tags=["documents"])
+
+
+def save_upload_with_limit(upload: UploadFile, dst_path: str, max_bytes: int) -> int:
+    """
+    把 UploadFile 保存到 dst_path，同时限制最大字节数。
+    超限会删除已写入的半截文件，并抛 AppError(FILE_TOO_LARGE, 400)。
+    返回实际写入大小（bytes）。
+    """
+    total = 0
+    os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+
+    try:
+        with open(dst_path, "wb") as f:
+            while True:
+                buf = upload.file.read(COPY_CHUNK_SIZE)
+                if not buf:
+                    break
+                total += len(buf)
+                if total > max_bytes:
+                    # 先关闭再删
+                    f.close()
+                    try:
+                        os.remove(dst_path)
+                    except Exception:
+                        pass
+                    raise AppError(
+                        code="FILE_TOO_LARGE",
+                        message=f"File exceeds {max_bytes // (1024 * 1024)}MB",
+                        status_code=400,
+                        details={"max_bytes": max_bytes, "received_bytes": total},
+                    )
+                f.write(buf)
+    finally:
+        # 保险：把文件指针复位（虽然这里保存后不会再读，但不影响）
+        try:
+            upload.file.seek(0)
+        except Exception:
+            pass
+
+    return total
 
 
 @router.get(
@@ -311,7 +357,7 @@ def get_document_chunks(
             },
         },
         400: {
-            "description": "Empty filename",
+            "description": "Bad request (empty filename / file too large)",
             "content": {
                 "application/json": {
                     "example": {
@@ -381,9 +427,16 @@ def upload_document(
     save_path = os.path.join(UPLOAD_ROOT, f"{doc.id}_{file.filename}")
 
     try:
-        with open(save_path, "wb") as f:
-            shutil.copyfileobj(file.file, f)
+        # ✅ Day26 Task4：保存时限制大小
+        _written_size = save_upload_with_limit(file, save_path, MAX_FILE_SIZE)
+    except AppError:
+        # 建议：保存失败/超限时标记 FAILED，避免前端一直看到 pending
+        doc.status = DocumentStatus.FAILED
+        db.commit()
+        raise
     except Exception as e:
+        doc.status = DocumentStatus.FAILED
+        db.commit()
         raise AppError(code="FILE_SAVE_FAILED", message="Failed to save file", status_code=500, details=str(e))
 
     doc.file_path = save_path
@@ -398,6 +451,8 @@ def upload_document(
             "document_id": doc.id,
             "status": doc.status.value,
             "message": "uploaded, indexing started",
+            # 可选：把文件大小返回给前端（调试方便）
+            # "file_size": _written_size,
         },
         error=None,
         trace_id=getattr(request.state, "trace_id", None),
