@@ -1,11 +1,11 @@
-import os 
 import json
 import redis
 import hashlib
 from typing import Any,Optional
+from app.core.config import settings
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-DEFAULT_TTL = int(os.getenv("CACHE_TTL_SECONDS", "600"))
+REDIS_URL = settings.REDIS_URL
+DEFAULT_TTL = settings.REDIS_TTL_SECONDS
 
 redis_client = redis.Redis.from_url(REDIS_URL,decode_responses=True)
 

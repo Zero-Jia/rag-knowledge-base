@@ -1,23 +1,24 @@
-# 请求/响应定义
+﻿from typing import List, Optional
+
 from pydantic import BaseModel, Field
-from typing import List, Optional
+
+from app.core.config import settings
 
 
 class QueryRequest(BaseModel):
     query: str = Field(..., min_length=1, description="User question")
-    top_k: int = Field(5, ge=1, le=20, description="How many chunks to retrieve")
+    top_k: int = Field(
+        settings.TOP_K,
+        ge=settings.TOP_K_MIN,
+        le=settings.TOP_K_MAX,
+        description="How many chunks to retrieve",
+    )
 
     model_config = {
         "json_schema_extra": {
             "examples": [
-                {
-                    "query": "什么是深度学习？",
-                    "top_k": 5
-                },
-                {
-                    "query": "总结这篇文档的关键要点",
-                    "top_k": 8
-                }
+                {"query": "What is deep learning?", "top_k": settings.TOP_K},
+                {"query": "Summarize key points", "top_k": min(settings.TOP_K_MAX, 8)},
             ]
         }
     }
@@ -33,10 +34,10 @@ class RetrievedChunk(BaseModel):
         "json_schema_extra": {
             "examples": [
                 {
-                    "text": "深度学习是机器学习的一个分支，通常使用多层神经网络进行特征学习。",
+                    "text": "Deep learning is a branch of machine learning.",
                     "document_id": 1,
                     "score": 0.87,
-                    "rerank_score": 0.63
+                    "rerank_score": 0.63,
                 }
             ]
         }
@@ -51,21 +52,21 @@ class QueryResponse(BaseModel):
         "json_schema_extra": {
             "examples": [
                 {
-                    "query": "什么是深度学习？",
+                    "query": "What is deep learning?",
                     "results": [
                         {
-                            "text": "深度学习是机器学习的一个分支，通常使用多层神经网络进行特征学习。",
+                            "text": "Deep learning is a branch of machine learning.",
                             "document_id": 1,
                             "score": 0.87,
-                            "rerank_score": 0.63
+                            "rerank_score": 0.63,
                         },
                         {
-                            "text": "深度学习在计算机视觉、语音识别、自然语言处理等领域有广泛应用。",
+                            "text": "It is widely used in vision and NLP.",
                             "document_id": 2,
                             "score": 0.81,
-                            "rerank_score": 0.58
-                        }
-                    ]
+                            "rerank_score": 0.58,
+                        },
+                    ],
                 }
             ]
         }

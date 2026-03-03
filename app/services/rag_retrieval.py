@@ -1,7 +1,7 @@
 import logging
 import time
 
-from app.config import settings
+from app.core.config import settings
 from app.services.retrieval_service import retrieve_chunks
 from app.services.hybrid_retrieval import hybrid_retrieve
 from app.services.advanced_retrieval import retrieve_with_rerank
@@ -16,8 +16,8 @@ def rag_retrieve(query:str):
     rid = get_request_id()
     start = time.time()
 
-    mode = settings.rag.retrieval_mode
-    top_k = settings.rag.top_k
+    mode = settings.RETRIEVAL_MODE
+    top_k = settings.TOP_K
 
     logger.info(f"Retrieval start | rid={rid} | mode={mode} | top_k={top_k} | query='{query}'")
 
@@ -35,7 +35,7 @@ def rag_retrieve(query:str):
                 results = retrieve_with_rerank(
                     query=query,
                     top_k=top_k,
-                    rerank_candidates=settings.rag.rerank_candidates,
+                    rerank_candidates=settings.RERANK_CANDIDATES,
                 )
             except TypeError:
                 # 保底兼容你旧签名

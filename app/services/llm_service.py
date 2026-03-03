@@ -1,10 +1,10 @@
 # LLM 服务封装（DeepSeek 版）
-import os
 import time
 import logging
 from typing import List,Dict,Optional,Iterator
 from openai import OpenAI
 from app.services.request_context import get_request_id
+from app.core.config import settings
 
 logger = logging.getLogger("rag.llm")
 
@@ -12,18 +12,13 @@ class LLMServiceError(RuntimeError):
     """统一的 LLM 异常类型，方便上层处理"""
     pass
 
-# ✅ Day13：统一配置（工程化）
-MAX_RETRIES = 3
-BASE_DELAY = 1
-TIMEOUT_SECONDS = 20
-
 def _create_client()->OpenAI:
     """
     创建 LLM Client（DeepSeek / OpenAI 通用）
     """
-    api_key = os.getenv("OPENAI_API_KEY")
-    base_url = os.getenv("OPENAI_BASE_URL")
-    model = os.getenv("OPENAI_MODEL")
+    api_key = settings.OPENAI_API_KEY
+    base_url = settings.OPENAI_BASE_URL
+    model = settings.OPENAI_MODEL
 
     if not api_key:
         raise LLMServiceError("Missing OPENAI_API_KEY")
@@ -40,8 +35,8 @@ def _create_client()->OpenAI:
 def generate_answer(
         messages:List[Dict[str,str]],
         temperature:float=0.2,
-        max_retries:int = MAX_RETRIES,
-        timeout:int = TIMEOUT_SECONDS, # 超时参数
+        max_retries:int = settings.MAX_RETRIES,
+        timeout:int = settings.TIMEOUT_SECONDS, # 超时参数
 )->str:
     """
     调用 DeepSeek Chat API 生成回答，非流式调用，返回完整答案（有限重试 + 指数退避 + 超时）
@@ -50,7 +45,7 @@ def generate_answer(
     start = time.time()
 
     client = _create_client()
-    model = os.getenv("OPENAI_MODEL")
+    model = settings.OPENAI_MODEL
 
     # 尽量不要把 messages 全文打出来，记录规模即可
     user_chars = 0
@@ -90,7 +85,7 @@ def generate_answer(
             logger.error(f"LLM call failed | rid={rid} | attempt={attempt}/{max_retries} | error={e}")
             if attempt < max_retries:
                 # 简单指数退避
-                time.sleep(0.8*(2**attempt))
+                time.sleep(settings.BASE_DELAY * (2**attempt))
                 continue
     elapsed = time.time() - start  
     logger.error(f"LLM final fail | rid={rid} | time={elapsed:.2f}s | error={last_error}")
@@ -99,7 +94,7 @@ def generate_answer(
 def stream_answer(
         messages:List[Dict[str,str]],
         temperature:float=0.2,
-        timeout:int = TIMEOUT_SECONDS,
+        timeout:int = settings.TIMEOUT_SECONDS,
 )->Iterator[str]:
     """
     ✅ Day13：流式调用（工程取舍：不做复杂重试）
@@ -110,7 +105,7 @@ def stream_answer(
     start = time.time()
 
     client = _create_client()
-    model = os.getenv("OPENAI_MODEL")
+    model = settings.OPENAI_MODEL
 
     logger.info(
         f"LLM stream start | rid={rid} | model={model} | temperature={temperature} | timeout={timeout}s"

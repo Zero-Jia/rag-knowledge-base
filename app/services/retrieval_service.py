@@ -2,10 +2,11 @@
 # Query embedding 和 document embedding 必须同源（同一个模型/同一个向量空间）
 from typing import List,Dict,Any
 
+from app.core.config import settings
 from app.services.embedding_service import EmbeddingService
 from app.services.vector_store import VectorStore
 
-def retrieve_chunks(query:str,top_k:int = 5)-> List[Dict[str,Any]]:
+def retrieve_chunks(query:str,top_k:int = settings.TOP_K)-> List[Dict[str,Any]]:
     embedder = EmbeddingService()
     store = VectorStore()
 

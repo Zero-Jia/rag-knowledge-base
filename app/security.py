@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.user import User
-from app.config import settings
+from app.core.config import settings
 
 # 1) 密码 hash 上下文：指定算法 bcrypt
 pwd_context = CryptContext(schemes=["bcrypt"],deprecated="auto")
@@ -44,15 +44,15 @@ def create_access_token(data:dict,expires_delta:Optional[timedelta]=None)->str:
     to_encode = data.copy()
 
     if expires_delta is None:
-        expires_delta = timedelta(minutes=settings.access_token_expire_minutes)
+        expires_delta = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     
     expires = datetime.utcnow()+expires_delta
     to_encode.update({"exp":expires})
 
     encode_jwt = jwt.encode(
         to_encode,
-        settings.secret_key,
-        algorithm=settings.algorithm,
+        settings.SECRET_KEY,
+        algorithm=settings.ALGORITHM,
     )
     return encode_jwt
 
@@ -78,8 +78,8 @@ def get_current_user(
     try:
         payload = jwt.decode(
             token,
-            settings.secret_key,
-            algorithms=[settings.algorithm],
+            settings.SECRET_KEY,
+            algorithms=[settings.ALGORITHM],
         )
         username:Optional[str] = payload.get("sub")
         if username is None:

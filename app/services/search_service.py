@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 from typing import Dict, Any
 import logging
 
+from app.core.config import settings
 from app.exceptions import AppError
 from app.services.retrieval_service import retrieve_chunks
 from app.services.cache_service import get_cache, set_cache, make_cache_key  # ✅ 新增
@@ -14,8 +15,12 @@ def search_chunks(db: Session, user_id: int, query: str, top_k: int) -> Dict[str
     if not q:
         raise AppError(code="EMPTY_QUERY", message="Query cannot be empty", status_code=400)
 
-    if top_k < 1 or top_k > 20:
-        raise AppError(code="INVALID_TOP_K", message="top_k must be between 1 and 20", status_code=400)
+    if top_k < settings.TOP_K_MIN or top_k > settings.TOP_K_MAX:
+        raise AppError(
+            code="INVALID_TOP_K",
+            message=f"top_k must be between {settings.TOP_K_MIN} and {settings.TOP_K_MAX}",
+            status_code=400,
+        )
 
     # ✅ Day25：缓存 key（区分用户 + query + top_k + 检索模式）
     # 你这个函数是纯向量 retrieve_chunks，所以 mode 我标记为 vector

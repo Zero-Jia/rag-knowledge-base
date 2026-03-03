@@ -8,6 +8,7 @@ from app.services.prompt_builder import build_messages
 from app.services.llm_service import generate_answer, stream_answer, LLMServiceError
 from app.services.cache_service import get_cache, set_cache, make_cache_key  # ✅ 新增
 from app.exceptions import AppError
+from app.core.config import settings
 
 logger = logging.getLogger("rag.perf")
 
@@ -118,7 +119,7 @@ def stream_chat_with_rag(
     user_id: Optional[int] = None,
     retrieval_mode: str = "semantic",
     top_k: Optional[int] = None,
-    chunk_size: int = 20,
+    chunk_size: int = settings.CHAT_STREAM_CHUNK_SIZE,
 ) -> Generator[str, None, None]:
     """
     流式：✅ 命中缓存则“直接流式吐出缓存 answer”，不调用检索/LLM

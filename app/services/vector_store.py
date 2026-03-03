@@ -4,6 +4,7 @@ from typing import Any,Dict,List,Optional
 import chromadb
 import os
 import uuid
+from app.core.config import settings
 
 class VectorStore:
     """
@@ -43,7 +44,7 @@ class VectorStore:
             ids=ids,
         )
     
-    def search(self,query_embedding:List[float],k:int = 5)->Dict[str,Any]:
+    def search(self,query_embedding:List[float],k:int = settings.TOP_K)->Dict[str,Any]:
         return self.collection.query(
             query_embeddings=[query_embedding],
             n_results=k,

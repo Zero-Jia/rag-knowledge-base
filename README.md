@@ -1,13 +1,13 @@
-# RAG Knowledge Base Backend
+﻿# RAG Knowledge Base Backend
 
 A production-oriented backend service for **Retrieval-Augmented Generation (RAG)**.  
-This project focuses on the complete minimal pipeline: **document → searchable knowledge → RAG chat API**.
+This project focuses on the complete minimal pipeline: **document 鈫?searchable knowledge 鈫?RAG chat API**.
 
 The backend is designed to be **frontend-friendly**, **API-stable**, and **ready for real product integration**.
 
 ---
 
-## 🚀 Features
+## 馃殌 Features
 
 - User registration & JWT authentication (OAuth2 Password Flow)
 - Document upload (PDF / TXT) with asynchronous indexing
@@ -19,7 +19,7 @@ The backend is designed to be **frontend-friendly**, **API-stable**, and **ready
 
 ---
 
-## 🧠 Architecture Overview
+## 馃 Architecture Overview
 
 The project follows a clear layered design:
 
@@ -39,7 +39,7 @@ This separation keeps **API design, business logic, and persistence cleanly deco
 
 ---
 
-## 🛠 Tech Stack
+## 馃洜 Tech Stack
 
 - Python 3.10  
 - FastAPI + Uvicorn  
@@ -52,29 +52,29 @@ This separation keeps **API design, business logic, and persistence cleanly deco
 
 ---
 
-## 📂 Project Structure
+## 馃搨 Project Structure
 
 ```
 app/
-├── main.py              # Application entry & router registration
-├── config.py            # Config & environment variables
-├── database.py          # Database engine & session
-├── models/              # ORM models (User, Document)
-├── schemas/             # Request / response schemas
-├── routers/             # API routes (auth, users, documents, search, chat)
-├── services/            # RAG core logic
-├── middleware/          # Trace ID, rate limiting, logging
-├── error_handlers.py    # Unified error handling
+鈹溾攢鈹€ main.py              # Application entry & router registration
+鈹溾攢鈹€ core/config.py       # Unified settings from .env
+鈹溾攢鈹€ database.py          # Database engine & session
+鈹溾攢鈹€ models/              # ORM models (User, Document)
+鈹溾攢鈹€ schemas/             # Request / response schemas
+鈹溾攢鈹€ routers/             # API routes (auth, users, documents, search, chat)
+鈹溾攢鈹€ services/            # RAG core logic
+鈹溾攢鈹€ middleware/          # Trace ID, rate limiting, logging
+鈹溾攢鈹€ error_handlers.py    # Unified error handling
 scripts/                 # Simple test scripts
 storage/
-├── uploads/             # Uploaded documents
-├── chroma/              # Vector store
-├── models/              # Cached embedding / rerank models
+鈹溾攢鈹€ uploads/             # Uploaded documents
+鈹溾攢鈹€ chroma/              # Vector store
+鈹溾攢鈹€ models/              # Cached embedding / rerank models
 ```
 
 ---
 
-## 🔐 Authentication
+## 馃攼 Authentication
 
 This backend uses **JWT Bearer authentication**.
 
@@ -91,60 +91,60 @@ Swagger UI supports this directly via **Authorize**.
 
 ---
 
-## 🔌 API Overview
+## 馃攲 API Overview
 
 ### Health
-- `GET /ping` – Service health check
+- `GET /ping` 鈥?Service health check
 
 ### Users & Auth
-- `POST /users/` – Register user
-- `POST /auth/login` – Login and obtain JWT
-- `GET /users/me` – Get current user profile (Auth required)
+- `POST /users/` 鈥?Register user
+- `POST /auth/login` 鈥?Login and obtain JWT
+- `GET /users/me` 鈥?Get current user profile (Auth required)
 
 ### Documents
-- `POST /documents/upload` – Upload document & start indexing
-- `GET /documents` – List user documents
-- `GET /documents/{id}/status` – Check indexing status
-- `GET /documents/{id}/text` – Text preview (first 1000 chars)
-- `GET /documents/{id}/chunks` – Chunk preview (debug)
+- `POST /documents/upload` 鈥?Upload document & start indexing
+- `GET /documents` 鈥?List user documents
+- `GET /documents/{id}/status` 鈥?Check indexing status
+- `GET /documents/{id}/text` 鈥?Text preview (first N chars)
+- `GET /documents/{id}/chunks` 鈥?Chunk preview (debug)
 
 ### Search / RAG
-- `POST /search/` – Vector semantic search
-- `POST /search/hybrid` – Hybrid search (vector + keyword)
-- `POST /search/rerank` – Search with rerank model
-- `POST /chat/` – RAG chat (non-streaming)
-- `POST /chat/stream` – RAG chat (streaming text/plain)
+- `POST /search/` 鈥?Vector semantic search
+- `POST /search/hybrid` 鈥?Hybrid search (vector + keyword)
+- `POST /search/rerank` 鈥?Search with rerank model
+- `POST /chat/` 鈥?RAG chat (non-streaming)
+- `POST /chat/stream` 鈥?RAG chat (streaming text/plain)
 
-📘 **Interactive API docs**:  
+馃摌 **Interactive API docs**:  
 `http://localhost:8000/docs`
 
 ---
 
-## 🧭 Frontend Integration Guide (Quick Start)
+## 馃Л Frontend Integration Guide (Quick Start)
 
-### 1️⃣ Authentication
+### 1锔忊儯 Authentication
 ```
-POST /auth/login  →  access_token
+POST /auth/login  鈫? access_token
 Authorization: Bearer <token>
 ```
 
-### 2️⃣ Document Workflow
+### 2锔忊儯 Document Workflow
 
 ```
-Upload → Poll Status → Search / Chat
+Upload 鈫?Poll Status 鈫?Search / Chat
 ```
 
-### 3️⃣ Search
+### 3锔忊儯 Search
 
 ```json
 POST /search/
 {
-  "query": "什么是深度学习？",
-  "top_k": 5
+  "query": "浠€涔堟槸娣卞害瀛︿範锛?,
+  "top_k": "<TOP_K>"
 }
 ```
 
-### 4️⃣ RAG Chat
+### 4锔忊儯 RAG Chat
 
 - Non-streaming: `POST /chat/`
 - Streaming: `POST /chat/stream` (text/plain)
@@ -153,22 +153,27 @@ POST /search/
 
 ## ⚙️ Configuration
 
-```env
-APP_NAME=RAG Knowledge Base Backend
-DEBUG=true
+This project reads runtime configuration from the repository root `.env` via `app/core/config.py`.
 
-SECRET_KEY=dev-secret-key
-ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=60
+1. Copy the template:
 
-OPENAI_API_KEY=your_key
-OPENAI_BASE_URL=https://api.deepseek.com/v1
-OPENAI_MODEL=deepseek-chat
+```bash
+cp .env.example .env
 ```
 
+2. Edit `.env` values (RAG/retrieval/LLM/Redis) as needed.
+
+3. Restart the backend process so new settings are loaded.
+
+Common keys:
+- `CHUNK_SIZE`, `CHUNK_OVERLAP`, `TOP_K`, `MAX_CHUNKS`, `EMBED_BATCH_SIZE`
+- `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`, `TIMEOUT_SECONDS`, `MAX_RETRIES`, `BASE_DELAY`
+- `REDIS_URL`, `REDIS_TTL_SECONDS`
+
+See `.env.example` for the full list.
 ---
 
-## ▶️ How to Run
+## 鈻讹笍 How to Run
 
 ```bash
 conda create -n rag python=3.10
@@ -179,16 +184,18 @@ uvicorn app.main:app --reload --port 8000
 
 ---
 
-## 🧊 API Freeze
+## 馃 API Freeze
 
 API structure is considered **stable**.  
 Future changes should be backward compatible or explicitly marked as breaking.
 
 ---
 
-## 🔮 Future Work
+## 馃敭 Future Work
 
 - More document formats & batch ingestion
 - Retrieval optimization (rerank / recall tuning)
 - Permission & access control refinement
 - Monitoring & production deployment
+
+

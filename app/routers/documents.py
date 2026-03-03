@@ -1,4 +1,4 @@
-# 文件上传 router（核心）
+﻿# 鏂囦欢涓婁紶 router锛堟牳蹇冿級
 """
 Documents Router (Frontend-facing)
 
@@ -13,7 +13,7 @@ Core endpoints (used by frontend):
   Get parsed text preview for display/debug (first 1000 chars).
 
 Optional / Debug endpoints:
-- GET    /documents/{document_id}/chunks?chunk_size=500&overlap=100
+- GET    /documents/{document_id}/chunks?chunk_size=<CHUNK_SIZE>&overlap=<CHUNK_OVERLAP>
   Preview chunking result (returns first 3 chunks + total).
 
 Recommended frontend flow:
@@ -39,11 +39,12 @@ from app.models.document import Document, DocumentStatus
 from app.security import get_current_user
 from app.schemas.common import APIResponse
 from app.exceptions import AppError
+from app.core.config import settings
 
 UPLOAD_ROOT = "storage/uploads"
 
 # =========================
-# Day26 Task4: 文件大小限制
+# Day26 Task4: 鏂囦欢澶у皬闄愬埗
 # =========================
 MAX_FILE_SIZE = 10 * 1024 * 1024   # 10MB
 COPY_CHUNK_SIZE = 1024 * 1024      # 1MB
@@ -53,9 +54,9 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 
 def save_upload_with_limit(upload: UploadFile, dst_path: str, max_bytes: int) -> int:
     """
-    把 UploadFile 保存到 dst_path，同时限制最大字节数。
-    超限会删除已写入的半截文件，并抛 AppError(FILE_TOO_LARGE, 400)。
-    返回实际写入大小（bytes）。
+    鎶?UploadFile 淇濆瓨鍒?dst_path锛屽悓鏃堕檺鍒舵渶澶у瓧鑺傛暟銆?
+    瓒呴檺浼氬垹闄ゅ凡鍐欏叆鐨勫崐鎴枃浠讹紝骞舵姏 AppError(FILE_TOO_LARGE, 400)銆?
+    杩斿洖瀹為檯鍐欏叆澶у皬锛坆ytes锛夈€?
     """
     total = 0
     os.makedirs(os.path.dirname(dst_path), exist_ok=True)
@@ -68,7 +69,7 @@ def save_upload_with_limit(upload: UploadFile, dst_path: str, max_bytes: int) ->
                     break
                 total += len(buf)
                 if total > max_bytes:
-                    # 先关闭再删
+                    # 鍏堝叧闂啀鍒?
                     f.close()
                     try:
                         os.remove(dst_path)
@@ -82,7 +83,7 @@ def save_upload_with_limit(upload: UploadFile, dst_path: str, max_bytes: int) ->
                     )
                 f.write(buf)
     finally:
-        # 保险：把文件指针复位（虽然这里保存后不会再读，但不影响）
+        # 淇濋櫓锛氭妸鏂囦欢鎸囬拡澶嶄綅锛堣櫧鐒惰繖閲屼繚瀛樺悗涓嶄細鍐嶈锛屼絾涓嶅奖鍝嶏級
         try:
             upload.file.seek(0)
         except Exception:
@@ -111,7 +112,7 @@ def save_upload_with_limit(upload: UploadFile, dst_path: str, max_bytes: int) ->
                         "data": {
                             "document_id": 1,
                             "content_type": "application/pdf",
-                            "text_preview": "深度学习是机器学习的一个分支……（前 1000 字）",
+                            "text_preview": "娣卞害瀛︿範鏄満鍣ㄥ涔犵殑涓€涓垎鏀€︹€︼紙鍓?1000 瀛楋級",
                             "text_length": 52340,
                         },
                         "error": None,
@@ -189,7 +190,7 @@ def get_document_text(
         data={
             "document_id": doc.id,
             "content_type": doc.content_type,
-            "text_preview": text[:1000],
+            "text_preview": text[: settings.TEXT_PREVIEW_CHARS],
             "text_length": len(text),
         },
         error=None,
@@ -217,12 +218,12 @@ def get_document_text(
                         "success": True,
                         "data": {
                             "document_id": 1,
-                            "chunk_size": 500,
-                            "overlap": 100,
+                            "chunk_size": settings.CHUNK_SIZE,
+                            "overlap": settings.CHUNK_OVERLAP,
                             "items": [
-                                "chunk-0: ……",
-                                "chunk-1: ……",
-                                "chunk-2: ……",
+                                "chunk-0: ...",
+                                "chunk-1: ...",
+                                "chunk-2: ...",
                             ],
                             "total": 42,
                         },
@@ -284,8 +285,18 @@ def get_document_text(
 def get_document_chunks(
     document_id: int,
     request: Request,
-    chunk_size: int = Query(500, ge=100, le=5000, description="Chunk size in characters"),
-    overlap: int = Query(100, ge=0, le=1000, description="Overlap size in characters"),
+    chunk_size: int = Query(
+        settings.CHUNK_SIZE,
+        ge=settings.CHUNK_SIZE_MIN,
+        le=settings.CHUNK_SIZE_MAX,
+        description="Chunk size in characters",
+    ),
+    overlap: int = Query(
+        settings.CHUNK_OVERLAP,
+        ge=settings.OVERLAP_MIN,
+        le=settings.OVERLAP_MAX,
+        description="Overlap size in characters",
+    ),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -427,10 +438,10 @@ def upload_document(
     save_path = os.path.join(UPLOAD_ROOT, f"{doc.id}_{file.filename}")
 
     try:
-        # ✅ Day26 Task4：保存时限制大小
+        # 鉁?Day26 Task4锛氫繚瀛樻椂闄愬埗澶у皬
         _written_size = save_upload_with_limit(file, save_path, MAX_FILE_SIZE)
     except AppError:
-        # 建议：保存失败/超限时标记 FAILED，避免前端一直看到 pending
+        # 寤鸿锛氫繚瀛樺け璐?瓒呴檺鏃舵爣璁?FAILED锛岄伩鍏嶅墠绔竴鐩寸湅鍒?pending
         doc.status = DocumentStatus.FAILED
         db.commit()
         raise
@@ -451,7 +462,7 @@ def upload_document(
             "document_id": doc.id,
             "status": doc.status.value,
             "message": "uploaded, indexing started",
-            # 可选：把文件大小返回给前端（调试方便）
+            # 鍙€夛細鎶婃枃浠跺ぇ灏忚繑鍥炵粰鍓嶇锛堣皟璇曟柟渚匡級
             # "file_size": _written_size,
         },
         error=None,
@@ -589,7 +600,12 @@ def get_documents(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    total, docs = list_documents(db=db, user_id=current_user.id, limit=50, offset=0)
+    total, docs = list_documents(
+        db=db,
+        user_id=current_user.id,
+        limit=settings.DOCUMENT_LIST_LIMIT,
+        offset=0,
+    )
 
     items = [
         {
@@ -607,3 +623,4 @@ def get_documents(
         error=None,
         trace_id=getattr(request.state, "trace_id", None),
     )
+

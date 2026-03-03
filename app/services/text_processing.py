@@ -1,5 +1,6 @@
 import re
 from typing import List
+from app.core.config import settings
 
 def clean_text(text:str)->str:
     """
@@ -20,7 +21,11 @@ def clean_text(text:str)->str:
 
     return text.strip()
 
-def chunk_text(text:str,chunk_size:int=500,overlap:int = 100)->List[str]:
+def chunk_text(
+    text: str,
+    chunk_size: int = settings.CHUNK_SIZE,
+    overlap: int = settings.CHUNK_OVERLAP,
+) -> List[str]:
     """
     固定长度分块 + overlap
     - chunk_size: 每块长度（字符数）
@@ -43,7 +48,7 @@ def chunk_text(text:str,chunk_size:int=500,overlap:int = 100)->List[str]:
         end = min(start+chunk_size,n)
         chunk = text[start:end].strip()
         # 过滤掉非常短或空的 chunk（防止垃圾块进向量库）
-        if len(chunk)>=20:
+        if len(chunk) >= settings.CHUNK_MIN_LENGTH:
             chunks.append(chunk)
         # 下一段起点：向后推进，但保留 overlap
         start = end - overlap
@@ -57,7 +62,11 @@ def chunk_text(text:str,chunk_size:int=500,overlap:int = 100)->List[str]:
             break
     return chunks
 
-def process_text(raw_text:str,chunk_size:int= 500,overlap:int = 100)->List[str]:
+def process_text(
+    raw_text: str,
+    chunk_size: int = settings.CHUNK_SIZE,
+    overlap: int = settings.CHUNK_OVERLAP,
+) -> List[str]:
     """
     清洗 + 分块 的 pipeline（Day 7 核心能力函数）
     """

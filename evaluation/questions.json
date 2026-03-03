@@ -1,0 +1,22 @@
+[
+    {
+      "question": "什么是深度学习?",
+      "expected_keyword": "神经网络"
+    },
+    {
+      "question": "How to reset password?",
+      "expected_keyword": "password reset"
+    },
+    {
+      "question": "How to upload a document?",
+      "expected_keyword": "documents/upload"
+    },
+    {
+      "question": "How to check document indexing status?",
+      "expected_keyword": "status"
+    },
+    {
+      "question": "What is hybrid search?",
+      "expected_keyword": "vector"
+    }
+  ]

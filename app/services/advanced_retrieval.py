@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import List, Dict, Any, Optional
 import logging
 
+from app.core.config import settings
 from app.services.hybrid_retrieval import hybrid_retrieve
 from app.services.rerank_service import RerankService
 from app.services.cache_service import get_cache, set_cache, make_cache_key  # ✅ 新增
@@ -16,8 +17,8 @@ def _build_adv_search_cache_key(
     query: str,
     user_id: Optional[int] = None,
     mode: str = "hybrid_rerank",
-    top_k: int = 5,
-    recall_multiplier: int = 2,
+    top_k: int = settings.TOP_K,
+    recall_multiplier: int = settings.RECALL_MULTIPLIER,
 ) -> str:
     q = (query or "").strip()
     raw = f"user={user_id}|mode={mode}|topk={top_k}|rm={recall_multiplier}|q={q}"
@@ -26,8 +27,8 @@ def _build_adv_search_cache_key(
 
 def retrieve_with_rerank(
     query: str,
-    top_k: int = 5,
-    recall_multiplier: int = 2,
+    top_k: int = settings.TOP_K,
+    recall_multiplier: int = settings.RECALL_MULTIPLIER,
     *,
     user_id: Optional[int] = None,
     mode: str = "hybrid_rerank",

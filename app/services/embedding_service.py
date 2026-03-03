@@ -5,6 +5,7 @@ from typing import List
 from sentence_transformers import SentenceTransformer
 import os
 import numpy as np
+from app.core.config import settings
 
 
 class EmbeddingService:
@@ -17,7 +18,7 @@ class EmbeddingService:
         self,
         model_name: str = "all-MiniLM-L6-v2",
         local_path: str = "storage/models/all-MiniLM-L6-v2",
-        default_batch_size: int = 32,   # ✅ 新增：默认批大小
+        default_batch_size: int = settings.EMBED_BATCH_SIZE,
     ):
         self.default_batch_size = default_batch_size
 

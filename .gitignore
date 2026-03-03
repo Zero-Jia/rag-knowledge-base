@@ -9,3 +9,5 @@ storage/
 
 # Env
 .env
+.env.*
+!.env.example
