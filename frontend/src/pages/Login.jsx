@@ -6,71 +6,89 @@ export default function Login() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState(null);
-  const [me, setMe] = useState(null);
+  const [loading, setLoading] = useState(false);
 
   async function handleSubmit(e) {
     e.preventDefault();
     setError(null);
-    setMe(null);
+    setLoading(true);
 
     try {
-      // 🔐 调用登录接口
       const data = await login(username, password);
-
-      // ✅ 兼容两种返回：
-      // 1) { access_token: "..." }
-      // 2) { token: "..." }
       const token = data?.access_token || data?.token;
       if (!token) throw new Error("No access_token in response");
 
-      // ✅ 保存 token
       localStorage.setItem("access_token", token);
 
-      alert("Login success");
+      // 验证 token 是否有效
+      await apiFetch("/documents", { method: "GET" });
 
-      // ✅ 验收点：调用一个需要鉴权的接口，确保 token 有效
-      const docs = await apiFetch("/documents", { method: "GET" });
-      setMe({ ok: true, preview: docs });
-
-      // 🔥 关键：强制刷新，让 App 重新读取 token
       window.location.reload();
     } catch (err) {
       setError(err?.message || "Login failed");
+    } finally {
+      setLoading(false);
     }
   }
 
   return (
-    <div style={{ maxWidth: 360, margin: "60px auto", fontFamily: "sans-serif" }}>
-      <form onSubmit={handleSubmit} style={{ display: "grid", gap: 12 }}>
-        <h2>Login</h2>
+    <div className="min-h-screen bg-gray-100 flex items-center justify-center px-4">
+      <div className="w-full max-w-md bg-white rounded-xl shadow-sm p-8 space-y-6">
+        
+        <div className="text-center">
+          <h1 className="text-2xl font-semibold">
+            RAG Knowledge Base
+          </h1>
+          <p className="text-sm text-gray-500 mt-1">
+            Sign in to continue
+          </p>
+        </div>
 
-        <input
-          placeholder="username"
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-        />
+        <form onSubmit={handleSubmit} className="space-y-4">
+          
+          <div>
+            <label className="text-sm font-medium">
+              Username
+            </label>
+            <input
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              className="w-full mt-1 border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-black"
+              placeholder="Enter username"
+            />
+          </div>
 
-        <input
-          type="password"
-          placeholder="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-        />
+          <div>
+            <label className="text-sm font-medium">
+              Password
+            </label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full mt-1 border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-black"
+              placeholder="Enter password"
+            />
+          </div>
 
-        <button type="submit" disabled={!username || !password}>
-          Login
-        </button>
+          {error && (
+            <div className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">
+              {error}
+            </div>
+          )}
 
-        {error && <p style={{ color: "red" }}>{error}</p>}
-        {me && (
-          <pre style={{ background: "#f6f6f6", padding: 12, overflow: "auto" }}>
-            {JSON.stringify(me.preview, null, 2)}
-          </pre>
-        )}
-      </form>
+          <button
+            type="submit"
+            disabled={!username || !password || loading}
+            className="w-full py-2 rounded-lg bg-black text-white font-medium hover:bg-gray-800 disabled:bg-gray-400 transition"
+          >
+            {loading ? "Signing in..." : "Login"}
+          </button>
+        </form>
 
-      <div style={{ marginTop: 16, fontSize: 12, opacity: 0.7 }}>
-        Tip: 打开 DevTools → Application → Local Storage 查看 access_token
+        <div className="text-xs text-gray-400 text-center">
+          Tip: Token will be stored in LocalStorage
+        </div>
       </div>
     </div>
   );

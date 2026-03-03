@@ -19,14 +19,10 @@ export default function Chat() {
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-
         const chunk = decoder.decode(value, { stream: true });
-
-        // 🔥 今天最重要的一行
-        setAnswer(prev => prev + chunk);
+        setAnswer((prev) => prev + chunk);
       }
-
-    } catch (err) {
+    } catch {
       setAnswer("Error occurred.");
     } finally {
       setLoading(false);
@@ -34,22 +30,31 @@ export default function Chat() {
   }
 
   return (
-    <div>
-      <h2>Chat</h2>
+    <div className="space-y-6">
+      <h2 className="text-lg font-semibold">Chat</h2>
 
-      <input
-        value={question}
-        onChange={(e) => setQuestion(e.target.value)}
-        placeholder="Ask something..."
-      />
+      <div className="flex gap-3">
+        <input
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+          placeholder="Ask something..."
+          className="flex-1 border rounded-lg px-3 py-2"
+        />
 
-      <button onClick={handleAsk} disabled={loading}>
-        Ask
-      </button>
+        <button
+          onClick={handleAsk}
+          disabled={loading}
+          className="px-4 py-2 rounded-lg bg-black text-white disabled:bg-gray-400"
+        >
+          Ask
+        </button>
+      </div>
 
-      {loading && <p>Thinking...</p>}
+      {loading && (
+        <p className="text-sm text-gray-500">Generating...</p>
+      )}
 
-      <div style={{ marginTop: 20, whiteSpace: "pre-wrap" }}>
+      <div className="border rounded-lg p-4 min-h-[150px] whitespace-pre-wrap bg-gray-50">
         {answer}
       </div>
     </div>
