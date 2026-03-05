@@ -1,4 +1,8 @@
-const API_BASE = "http://127.0.0.1:8000";
+// ✅ 先读 Vite 环境变量（docker compose 会注入）
+// 本地开发没配时，默认回退到 127.0.0.1
+const API_BASE =
+  import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ||
+  "http://127.0.0.1:8000";
 
 export async function apiFetch(path, options = {}) {
   const token = localStorage.getItem("access_token");
@@ -17,7 +21,10 @@ export async function apiFetch(path, options = {}) {
     headers["Content-Type"] = "application/json";
   }
 
-  const resp = await fetch(`${API_BASE}${path}`, {
+  // ✅ path 允许传 "/xxx" 或 "xxx"，都能拼对
+  const normPath = path.startsWith("/") ? path : `/${path}`;
+
+  const resp = await fetch(`${API_BASE}${normPath}`, {
     ...options,
     headers,
   });
