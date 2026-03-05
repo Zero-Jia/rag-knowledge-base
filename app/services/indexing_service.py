@@ -36,6 +36,30 @@ def get_store() -> VectorStore:
     return _store_singleton
 
 
+def _sanitize_chunks(chunks: List[object]) -> List[str]:
+    """
+    ✅ 关键修复：SentenceTransformer 只接受 List[str]
+    - 去掉 None / 非 str
+    - 去掉空串/全空白
+    - 可选：对超长 chunk 截断（避免 tokenizer 异常或极慢）
+    """
+    cleaned: List[str] = []
+    max_chars = getattr(settings, "CHUNK_SIZE", 500)  # 没有就默认 500
+
+    for c in chunks or []:
+        if not isinstance(c, str):
+            continue
+        s = c.strip()
+        if not s:
+            continue
+        # 可选：截断超长 chunk（防止极端 PDF 解析出巨长段）
+        if len(s) > max_chars * 4:
+            s = s[: max_chars * 4]
+        cleaned.append(s)
+
+    return cleaned
+
+
 def index_document_chunks(
     document_id: int,
     chunks: List[str],
@@ -43,9 +67,28 @@ def index_document_chunks(
     store: VectorStore,
 ) -> None:
     if not chunks:
+        logger.warning("No valid chunks to embed | doc_id=%s", document_id)
         return
 
-    embeddings = embedder.embed_texts(chunks, batch_size=settings.EMBED_BATCH_SIZE)
+    try:
+        embeddings = embedder.embed_texts(
+            chunks,
+            batch_size=settings.EMBED_BATCH_SIZE,
+        )
+    except Exception as e:
+        # 打印一些上下文，便于定位到底是哪些 chunk 有问题
+        preview = []
+        for x in chunks[:3]:
+            preview.append({"type": type(x).__name__, "len": len(x)})
+        logger.error(
+            "Embedding failed | doc_id=%s | chunks=%s | preview=%s | err=%s",
+            document_id,
+            len(chunks),
+            preview,
+            e,
+        )
+        raise
+
     metadatas = [{"document_id": document_id, "chunk_index": i} for i in range(len(chunks))]
     ids = [f"doc{document_id}_chunk{i}" for i in range(len(chunks))]
 
@@ -63,19 +106,51 @@ def index_document_pipeline(document_id: int) -> None:
 
     try:
         doc = db.query(Document).filter(Document.id == document_id).first()
+
+        # 如果 document 已删除
         if not doc:
+            logger.warning("Document not found, stop indexing | doc_id=%s", document_id)
             return
 
+        # 如果 document 已经失败
+        if doc.status == DocumentStatus.FAILED:
+            logger.warning("Document already failed, stop indexing | doc_id=%s", document_id)
+            return
+
+        # 标记为 processing
         doc.status = DocumentStatus.PROCESSING
         db.commit()
 
+        # 解析文档
         t0 = time.time()
         raw_text = parse_document(doc.file_path, doc.content_type)
         t1 = time.time()
 
-        chunks = process_text(raw_text)
+        if not raw_text or not str(raw_text).strip():
+            logger.warning("Parsed empty text | doc_id=%s", document_id)
+            doc.status = DocumentStatus.FAILED
+            db.commit()
+            return
+
+        # chunk
+        t2_start = time.time()
+        chunks_raw = process_text(raw_text)
         t2 = time.time()
 
+        # ✅ 关键：清洗 chunks，确保都是可 encode 的 string
+        chunks = _sanitize_chunks(chunks_raw)
+
+        if not chunks:
+            logger.warning(
+                "No valid chunks after sanitize | doc_id=%s | raw_chunks=%s",
+                document_id,
+                0 if chunks_raw is None else len(chunks_raw),
+            )
+            doc.status = DocumentStatus.FAILED
+            db.commit()
+            return
+
+        # 限制最大 chunks 数
         original_chunks = len(chunks)
         if original_chunks > settings.MAX_CHUNKS:
             logger.warning(
@@ -89,6 +164,7 @@ def index_document_pipeline(document_id: int) -> None:
         embedder = get_embedder()
         store = get_store()
 
+        # embeddings + vector store
         t3 = time.time()
         index_document_chunks(
             document_id=doc.id,
@@ -99,12 +175,11 @@ def index_document_pipeline(document_id: int) -> None:
         t4 = time.time()
 
         logger.info(
-            "Indexing performance | doc_id=%s | chunks=%s | parse=%.2fs | chunking=%.2fs | "
-            "embed+store=%.2fs | total=%.2fs",
+            "Indexing performance | doc_id=%s | chunks=%s | parse=%.2fs | chunking=%.2fs | embed+store=%.2fs | total=%.2fs",
             document_id,
             len(chunks),
             (t1 - t0),
-            (t2 - t1),
+            (t2 - t2_start),
             (t4 - t3),
             (t4 - start_total),
         )

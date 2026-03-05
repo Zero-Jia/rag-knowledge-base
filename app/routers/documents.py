@@ -1,4 +1,4 @@
-﻿# 鏂囦欢涓婁紶 router锛堟牳蹇冿級
+﻿# 文件上传 router（核心）
 """
 Documents Router (Frontend-facing)
 
@@ -34,6 +34,7 @@ from app.services.text_processing import process_text
 from app.services.document_parser import parse_document
 from app.services.indexing_service import index_document_pipeline
 from app.services.document_service import get_document_by_id, list_documents
+from app.services.document_delete_service import delete_document_full
 from app.database import get_db
 from app.models.document import Document, DocumentStatus
 from app.security import get_current_user
@@ -44,7 +45,7 @@ from app.core.config import settings
 UPLOAD_ROOT = "storage/uploads"
 
 # =========================
-# Day26 Task4: 鏂囦欢澶у皬闄愬埗
+# Day26 Task4: 文件大小限制
 # =========================
 MAX_FILE_SIZE = 10 * 1024 * 1024   # 10MB
 COPY_CHUNK_SIZE = 1024 * 1024      # 1MB
@@ -54,9 +55,9 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 
 def save_upload_with_limit(upload: UploadFile, dst_path: str, max_bytes: int) -> int:
     """
-    鎶?UploadFile 淇濆瓨鍒?dst_path锛屽悓鏃堕檺鍒舵渶澶у瓧鑺傛暟銆?
-    瓒呴檺浼氬垹闄ゅ凡鍐欏叆鐨勫崐鎴枃浠讹紝骞舵姏 AppError(FILE_TOO_LARGE, 400)銆?
-    杩斿洖瀹為檯鍐欏叆澶у皬锛坆ytes锛夈€?
+    把 UploadFile 保存到 dst_path，同时限制最大字节数。
+    超限会删除已写入的半截文件，并抛 AppError(FILE_TOO_LARGE, 400)。
+    返回实际写入大小（bytes）。
     """
     total = 0
     os.makedirs(os.path.dirname(dst_path), exist_ok=True)
@@ -69,7 +70,7 @@ def save_upload_with_limit(upload: UploadFile, dst_path: str, max_bytes: int) ->
                     break
                 total += len(buf)
                 if total > max_bytes:
-                    # 鍏堝叧闂啀鍒?
+                    # 先关闭再删
                     f.close()
                     try:
                         os.remove(dst_path)
@@ -83,7 +84,7 @@ def save_upload_with_limit(upload: UploadFile, dst_path: str, max_bytes: int) ->
                     )
                 f.write(buf)
     finally:
-        # 淇濋櫓锛氭妸鏂囦欢鎸囬拡澶嶄綅锛堣櫧鐒惰繖閲屼繚瀛樺悗涓嶄細鍐嶈锛屼絾涓嶅奖鍝嶏級
+        # 保险：把文件指针复位（虽然这里保存后不会再读，但不影响）
         try:
             upload.file.seek(0)
         except Exception:
@@ -102,73 +103,6 @@ def save_upload_with_limit(upload: UploadFile, dst_path: str, max_bytes: int) ->
         "- Useful for debugging / showing quick preview in frontend"
     ),
     response_model=APIResponse,
-    responses={
-        200: {
-            "description": "Parsed text preview",
-            "content": {
-                "application/json": {
-                    "example": {
-                        "success": True,
-                        "data": {
-                            "document_id": 1,
-                            "content_type": "application/pdf",
-                            "text_preview": "娣卞害瀛︿範鏄満鍣ㄥ涔犵殑涓€涓垎鏀€︹€︼紙鍓?1000 瀛楋級",
-                            "text_length": 52340,
-                        },
-                        "error": None,
-                        "trace_id": "a1b2c3d4e5f6",
-                    }
-                }
-            },
-        },
-        401: {
-            "description": "Unauthorized (missing/invalid token)",
-            "content": {
-                "application/json": {
-                    "example": {
-                        "success": False,
-                        "data": None,
-                        "error": {"code": "UNAUTHORIZED", "message": "Not authenticated", "details": None},
-                        "trace_id": "cafe1234dead",
-                    }
-                }
-            },
-        },
-        415: {
-            "description": "Unsupported document type",
-            "content": {
-                "application/json": {
-                    "example": {
-                        "success": False,
-                        "data": None,
-                        "error": {
-                            "code": "UNSUPPORTED_DOCUMENT_TYPE",
-                            "message": "Unsupported content type: application/msword",
-                            "details": None,
-                        },
-                        "trace_id": "f00dbabe0001",
-                    }
-                }
-            },
-        },
-        500: {
-            "description": "Document parse failed",
-            "content": {
-                "application/json": {
-                    "example": {
-                        "success": False,
-                        "data": None,
-                        "error": {
-                            "code": "DOCUMENT_PARSE_FAILED",
-                            "message": "Parse failed",
-                            "details": "Exception details...",
-                        },
-                        "trace_id": "deadbeef0001",
-                    }
-                }
-            },
-        },
-    },
 )
 def get_document_text(
     document_id: int,
@@ -209,78 +143,6 @@ def get_document_text(
         "- Debug/preview endpoint (frontend usually doesn't need it in production)"
     ),
     response_model=APIResponse,
-    responses={
-        200: {
-            "description": "Chunk preview",
-            "content": {
-                "application/json": {
-                    "example": {
-                        "success": True,
-                        "data": {
-                            "document_id": 1,
-                            "chunk_size": settings.CHUNK_SIZE,
-                            "overlap": settings.CHUNK_OVERLAP,
-                            "items": [
-                                "chunk-0: ...",
-                                "chunk-1: ...",
-                                "chunk-2: ...",
-                            ],
-                            "total": 42,
-                        },
-                        "error": None,
-                        "trace_id": "a1b2c3d4e5f6",
-                    }
-                }
-            },
-        },
-        401: {
-            "description": "Unauthorized (missing/invalid token)",
-            "content": {
-                "application/json": {
-                    "example": {
-                        "success": False,
-                        "data": None,
-                        "error": {"code": "UNAUTHORIZED", "message": "Not authenticated", "details": None},
-                        "trace_id": "cafe1234dead",
-                    }
-                }
-            },
-        },
-        415: {
-            "description": "Unsupported document type",
-            "content": {
-                "application/json": {
-                    "example": {
-                        "success": False,
-                        "data": None,
-                        "error": {
-                            "code": "UNSUPPORTED_DOCUMENT_TYPE",
-                            "message": "Unsupported content type: application/msword",
-                            "details": None,
-                        },
-                        "trace_id": "f00dbabe0002",
-                    }
-                }
-            },
-        },
-        500: {
-            "description": "Document parse failed",
-            "content": {
-                "application/json": {
-                    "example": {
-                        "success": False,
-                        "data": None,
-                        "error": {
-                            "code": "DOCUMENT_PARSE_FAILED",
-                            "message": "Parse failed",
-                            "details": "Exception details...",
-                        },
-                        "trace_id": "deadbeef0002",
-                    }
-                }
-            },
-        },
-    },
 )
 def get_document_chunks(
     document_id: int,
@@ -349,68 +211,6 @@ def get_document_chunks(
         "- Check progress via `GET /documents/{document_id}/status`"
     ),
     response_model=APIResponse,
-    responses={
-        200: {
-            "description": "Upload accepted, indexing started",
-            "content": {
-                "application/json": {
-                    "example": {
-                        "success": True,
-                        "data": {
-                            "document_id": 12,
-                            "status": "pending",
-                            "message": "uploaded, indexing started",
-                        },
-                        "error": None,
-                        "trace_id": "a1b2c3d4e5f6",
-                    }
-                }
-            },
-        },
-        400: {
-            "description": "Bad request (empty filename / file too large)",
-            "content": {
-                "application/json": {
-                    "example": {
-                        "success": False,
-                        "data": None,
-                        "error": {"code": "EMPTY_FILENAME", "message": "Empty filename", "details": None},
-                        "trace_id": "badf00d00001",
-                    }
-                }
-            },
-        },
-        401: {
-            "description": "Unauthorized (missing/invalid token)",
-            "content": {
-                "application/json": {
-                    "example": {
-                        "success": False,
-                        "data": None,
-                        "error": {"code": "UNAUTHORIZED", "message": "Not authenticated", "details": None},
-                        "trace_id": "cafe1234dead",
-                    }
-                }
-            },
-        },
-        500: {
-            "description": "Failed to save file",
-            "content": {
-                "application/json": {
-                    "example": {
-                        "success": False,
-                        "data": None,
-                        "error": {
-                            "code": "FILE_SAVE_FAILED",
-                            "message": "Failed to save file",
-                            "details": "Permission denied",
-                        },
-                        "trace_id": "deadbeef0003",
-                    }
-                }
-            },
-        },
-    },
 )
 def upload_document(
     background_tasks: BackgroundTasks,
@@ -438,10 +238,10 @@ def upload_document(
     save_path = os.path.join(UPLOAD_ROOT, f"{doc.id}_{file.filename}")
 
     try:
-        # 鉁?Day26 Task4锛氫繚瀛樻椂闄愬埗澶у皬
+        # ✅ Day26 Task4：保存时限制大小
         _written_size = save_upload_with_limit(file, save_path, MAX_FILE_SIZE)
     except AppError:
-        # 寤鸿锛氫繚瀛樺け璐?瓒呴檺鏃舵爣璁?FAILED锛岄伩鍏嶅墠绔竴鐩寸湅鍒?pending
+        # 建议：保存失败/超限时标记 FAILED，避免前端一直看到 pending
         doc.status = DocumentStatus.FAILED
         db.commit()
         raise
@@ -462,7 +262,7 @@ def upload_document(
             "document_id": doc.id,
             "status": doc.status.value,
             "message": "uploaded, indexing started",
-            # 鍙€夛細鎶婃枃浠跺ぇ灏忚繑鍥炵粰鍓嶇锛堣皟璇曟柟渚匡級
+            # 可选：把文件大小返回给前端（调试方便）
             # "file_size": _written_size,
         },
         error=None,
@@ -476,54 +276,9 @@ def upload_document(
     description=(
         "Return the current indexing status for a document.\n\n"
         "- Auth required\n"
-        "- Use this endpoint to poll until status becomes `indexed` (or `failed`)"
+        "- Use this endpoint to poll until status becomes `done` (or `failed`)"
     ),
     response_model=APIResponse,
-    responses={
-        200: {
-            "description": "Current document status",
-            "content": {
-                "application/json": {
-                    "example": {
-                        "success": True,
-                        "data": {"document_id": 12, "status": "indexed"},
-                        "error": None,
-                        "trace_id": "a1b2c3d4e5f6",
-                    }
-                }
-            },
-        },
-        401: {
-            "description": "Unauthorized (missing/invalid token)",
-            "content": {
-                "application/json": {
-                    "example": {
-                        "success": False,
-                        "data": None,
-                        "error": {"code": "UNAUTHORIZED", "message": "Not authenticated", "details": None},
-                        "trace_id": "cafe1234dead",
-                    }
-                }
-            },
-        },
-        500: {
-            "description": "Internal error",
-            "content": {
-                "application/json": {
-                    "example": {
-                        "success": False,
-                        "data": None,
-                        "error": {
-                            "code": "DOCUMENT_STATUS_FAILED",
-                            "message": "Failed to get document status",
-                            "details": "Unexpected error",
-                        },
-                        "trace_id": "deadbeef0004",
-                    }
-                }
-            },
-        },
-    },
 )
 def get_document_status(
     document_id: int,
@@ -547,53 +302,10 @@ def get_document_status(
     description=(
         "List documents uploaded by the current user.\n\n"
         "- Auth required\n"
-        "- Returns basic metadata: id, filename, content_type, status"
+        "- Returns basic metadata: id, filename, content_type, status\n"
+        "- Adds `display_id` (1..N) for UI display without changing DB primary key"
     ),
     response_model=APIResponse,
-    responses={
-        200: {
-            "description": "Document list",
-            "content": {
-                "application/json": {
-                    "example": {
-                        "success": True,
-                        "data": {
-                            "items": [
-                                {
-                                    "document_id": 12,
-                                    "filename": "deep_learning_intro.pdf",
-                                    "content_type": "application/pdf",
-                                    "status": "indexed",
-                                },
-                                {
-                                    "document_id": 13,
-                                    "filename": "notes.txt",
-                                    "content_type": "text/plain",
-                                    "status": "pending",
-                                },
-                            ],
-                            "total": 2,
-                        },
-                        "error": None,
-                        "trace_id": "a1b2c3d4e5f6",
-                    }
-                }
-            },
-        },
-        401: {
-            "description": "Unauthorized (missing/invalid token)",
-            "content": {
-                "application/json": {
-                    "example": {
-                        "success": False,
-                        "data": None,
-                        "error": {"code": "UNAUTHORIZED", "message": "Not authenticated", "details": None},
-                        "trace_id": "cafe1234dead",
-                    }
-                }
-            },
-        },
-    },
 )
 def get_documents(
     request: Request,
@@ -607,14 +319,16 @@ def get_documents(
         offset=0,
     )
 
+    # ✅ display_id: 根据当前排序（id desc）从 1 开始
     items = [
         {
-            "document_id": d.id,
+            "display_id": idx + 1,          # ✅ 新增：展示用连续序号
+            "document_id": d.id,            # ✅ 真实 id（用于删除/调试）
             "filename": d.filename,
             "content_type": d.content_type,
             "status": d.status.value,
         }
-        for d in docs
+        for idx, d in enumerate(docs)
     ]
 
     return APIResponse(
@@ -624,3 +338,31 @@ def get_documents(
         trace_id=getattr(request.state, "trace_id", None),
     )
 
+
+@router.delete(
+    "/{document_id}",
+    summary="Delete document",
+    description="Delete document file + embeddings + database record",
+    response_model=APIResponse,
+)
+def delete_document_api(
+    document_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    delete_document_full(
+        db=db,
+        document_id=document_id,
+        user_id=current_user.id,
+    )
+
+    return APIResponse(
+        success=True,
+        data={
+            "document_id": document_id,
+            "deleted": True,
+        },
+        error=None,
+        trace_id=getattr(request.state, "trace_id", None),
+    )

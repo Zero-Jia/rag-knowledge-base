@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { listDocuments } from "../api/documents";
+import { listDocuments, deleteDocument } from "../api/documents";
 
 function StatusBadge({ status }) {
   const styles = {
@@ -9,7 +9,11 @@ function StatusBadge({ status }) {
   };
 
   return (
-    <span className={`px-3 py-1 text-xs rounded-full font-medium ${styles[status] || "bg-gray-100"}`}>
+    <span
+      className={`px-3 py-1 text-xs rounded-full font-medium ${
+        styles[status] || "bg-gray-100"
+      }`}
+    >
       {status}
     </span>
   );
@@ -34,6 +38,17 @@ export default function Documents() {
     }
   }
 
+  async function handleDelete(documentId) {
+    if (!confirm("Delete this document?")) return;
+
+    try {
+      await deleteDocument(documentId);
+      await loadDocs();
+    } catch (e) {
+      alert(e.message);
+    }
+  }
+
   useEffect(() => {
     loadDocs();
     const timer = setInterval(loadDocs, 3000);
@@ -53,22 +68,38 @@ export default function Documents() {
       </div>
 
       {error && <p className="text-red-600">Error: {error}</p>}
-
-      {docs.length === 0 && (
-        <p className="text-gray-500">No documents</p>
-      )}
+      {docs.length === 0 && <p className="text-gray-500">No documents</p>}
 
       <div className="space-y-3">
         {docs.map((doc) => (
           <div
-            key={doc.id}
+            key={doc.document_id}
             className="border rounded-lg p-4 flex justify-between items-center"
           >
             <div>
               <p className="font-medium">{doc.filename}</p>
-              <p className="text-sm text-gray-500">ID: {doc.id}</p>
+
+              {/* ✅ 展示用序号（连续） */}
+              <p className="text-sm text-gray-500">
+                No: {doc.display_id ?? "-"}
+              </p>
+
+              {/* ✅ 可选：保留真实 ID，方便你调试（不想显示就删掉这一行） */}
+              <p className="text-xs text-gray-400">
+                ID: {doc.document_id}
+              </p>
             </div>
-            <StatusBadge status={doc.status} />
+
+            <div className="flex items-center gap-3">
+              <StatusBadge status={doc.status} />
+
+              <button
+                onClick={() => handleDelete(doc.document_id)}
+                className="px-3 py-1 text-sm text-red-600 border border-red-200 rounded hover:bg-red-50"
+              >
+                Delete
+              </button>
+            </div>
           </div>
         ))}
       </div>
