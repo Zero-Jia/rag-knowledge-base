@@ -41,6 +41,10 @@ def hybrid_retrieve(
 ) -> List[Dict[str, Any]]:
     """
     Hybrid Search + Cache (cache failure won't break search)
+
+    ✅ 修改点：
+    - 输出中的 score 改为 final_score（融合分数，越大越好）
+    - 保留 vector_score 记录原始向量分数（通常是 distance / 越小越好）
     """
     q = (query or "").strip()
     if not q:
@@ -77,16 +81,24 @@ def hybrid_retrieve(
             kw = 0.0
         r["keyword_score"] = kw
 
-        # ✅ dense 分数兜底：你的 retrieve_chunks 返回字段叫 score
-        # 你之前把 score 当 distance 做倒数，这里仍保留，但保证不会崩
-        score_val = _safe_float(r.get("score"), 0.0)
+        # ✅ 原始向量分数（通常是 distance：越小越好）
+        vector_score = _safe_float(r.get("score"), 0.0)
+        r["vector_score"] = vector_score
 
-        # 如果 score 很小/为0，倒数会很大，做个下限保护
-        dense_part = 1.0 / (max(score_val, 1e-6))
+        # ✅ dense 分数：把 distance 转成“越大越好”
+        dense_part = 1.0 / (max(vector_score, 1e-6))
 
-        r["final_score"] = dense_part * 0.7 + kw * 0.3
+        # ✅ 融合分数（越大越好）
+        final_score = dense_part * 0.7 + kw * 0.3
 
-    vector_results.sort(key=lambda x: _safe_float(x.get("final_score"), 0.0), reverse=True)
+        # ✅ 关键：把输出 score 改成 final_score
+        r["score"] = final_score
+
+        # 可选：保留 final_score 字段（你想只用 score 也行）
+        r["final_score"] = final_score
+
+    # ✅ 现在直接按 score（也就是 final_score）排序
+    vector_results.sort(key=lambda x: _safe_float(x.get("score"), 0.0), reverse=True)
     results = vector_results[:top_k]
 
     # ✅ 4) 写缓存（失败也不影响主流程）

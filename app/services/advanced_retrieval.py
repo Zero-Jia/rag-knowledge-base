@@ -7,7 +7,7 @@ import logging
 from app.core.config import settings
 from app.services.hybrid_retrieval import hybrid_retrieve
 from app.services.rerank_service import RerankService
-from app.services.cache_service import get_cache, set_cache, make_cache_key  # ✅ 新增
+from app.services.cache_service import get_cache, set_cache, make_cache_key
 
 logger = logging.getLogger("rag.perf")
 
@@ -34,18 +34,16 @@ def retrieve_with_rerank(
     mode: str = "hybrid_rerank",
 ) -> List[Dict[str, Any]]:
     """
-    标准两阶段 + Redis 缓存（Day25）：
-      0) cache：命中直接返回（跳过召回 + rerank）
-      1) recall：hybrid 召回 top_k * recall_multiplier 个候选
-      2) rerank：cross-encoder 精排
-      3) return：取最终 top_k
-      4) cache：写入最终 top_k 结果
+    两阶段检索 + rerank + Redis cache
+
+    修改后逻辑：
+      score = rerank_score
     """
     q = (query or "").strip()
     if not q:
         return []
 
-    # ✅ 0) 查缓存（缓存最终 top_k 的 rerank 结果）
+    # 0) 查缓存
     cache_key = _build_adv_search_cache_key(
         query=q,
         user_id=user_id,
@@ -53,6 +51,7 @@ def retrieve_with_rerank(
         top_k=top_k,
         recall_multiplier=recall_multiplier,
     )
+
     cached = get_cache(cache_key)
     if cached is not None:
         logger.info(f"adv_search cache_hit | key={cache_key} | q_len={len(q)} | top_k={top_k}")
@@ -60,18 +59,27 @@ def retrieve_with_rerank(
 
     logger.info(f"adv_search cache_miss | key={cache_key} | q_len={len(q)} | top_k={top_k}")
 
-    # 1) 召回更多候选
+    # 1) hybrid 召回更多候选
     recall_k = max(top_k * recall_multiplier, top_k)
     candidates = hybrid_retrieve(q, recall_k, user_id=user_id, mode="hybrid")
 
-    # 2) 精排（只在候选上跑）
+    # 2) rerank 精排
     reranker = RerankService()
     reranked = reranker.rerank(q, candidates)
 
-    # 3) 返回最终 top_k
+# ⭐ 用 rerank_score 覆盖 score，并删除 rerank_score 字段
+    for r in reranked:
+        if "rerank_score" in r:
+            r["score"] = float(r["rerank_score"])
+            del r["rerank_score"]
+
+    # 按 rerank score 排序
+    reranked.sort(key=lambda x: float(x.get("score", 0.0)), reverse=True)
+
+    # 3) 取 top_k
     results = reranked[:top_k]
 
-    # ✅ 4) 写缓存（必须可 JSON 序列化）
+    # 4) 写缓存
     set_cache(cache_key, results)
 
     return results
