@@ -18,7 +18,8 @@ export default function Login() {
       const token = data?.access_token || data?.token;
       if (!token) throw new Error("No access_token in response");
 
-      localStorage.setItem("access_token", token);
+      // ✅ 改为 sessionStorage：关闭标签页/浏览器后自动失效
+      sessionStorage.setItem("access_token", token);
 
       // 验证 token 是否有效
       await apiFetch("/documents", { method: "GET" });
@@ -34,40 +35,32 @@ export default function Login() {
   return (
     <div className="min-h-screen bg-gray-100 flex items-center justify-center px-4">
       <div className="w-full max-w-md bg-white rounded-xl shadow-sm p-8 space-y-6">
-        
         <div className="text-center">
-          <h1 className="text-2xl font-semibold">
-            RAG Knowledge Base
-          </h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Sign in to continue
-          </p>
+          <h1 className="text-2xl font-semibold">RAG Knowledge Base</h1>
+          <p className="text-sm text-gray-500 mt-1">Sign in to continue</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          
           <div>
-            <label className="text-sm font-medium">
-              Username
-            </label>
+            <label className="text-sm font-medium">Username</label>
             <input
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               className="w-full mt-1 border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-black"
               placeholder="Enter username"
+              autoComplete="username"
             />
           </div>
 
           <div>
-            <label className="text-sm font-medium">
-              Password
-            </label>
+            <label className="text-sm font-medium">Password</label>
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className="w-full mt-1 border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-black"
               placeholder="Enter password"
+              autoComplete="current-password"
             />
           </div>
 
@@ -87,7 +80,7 @@ export default function Login() {
         </form>
 
         <div className="text-xs text-gray-400 text-center">
-          Tip: Token will be stored in LocalStorage
+          Tip: Token will be stored in SessionStorage
         </div>
       </div>
     </div>

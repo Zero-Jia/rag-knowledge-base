@@ -7,7 +7,9 @@ import Chat from "./pages/Chat";
 
 export default function App() {
   const [page, setPage] = useState("upload");
-  const token = localStorage.getItem("access_token");
+
+  // ✅ 改为 sessionStorage
+  const token = sessionStorage.getItem("access_token");
 
   if (!token) return <Login />;
 
@@ -24,24 +26,35 @@ export default function App() {
     </button>
   );
 
+  const logout = () => {
+    sessionStorage.removeItem("access_token");
+    window.location.reload();
+  };
+
   return (
     <div className="min-h-screen bg-gray-100">
-      {/* 顶部导航 */}
       <header className="bg-white shadow-sm">
         <div className="max-w-5xl mx-auto px-6 py-4 flex justify-between items-center">
-          <h1 className="text-xl font-semibold">
-            RAG Knowledge Base
-          </h1>
-          <div className="flex gap-3">
+          <h1 className="text-xl font-semibold">RAG Knowledge Base</h1>
+
+          <div className="flex gap-3 items-center">
             {navBtn("upload", "Upload")}
             {navBtn("docs", "Documents")}
             {navBtn("search", "Search")}
             {navBtn("chat", "Chat")}
+
+            {/* ✅ 退出登录按钮 */}
+            <button
+              onClick={logout}
+              className="px-4 py-2 rounded-lg text-sm font-medium border border-gray-300 hover:bg-gray-100 transition"
+              title="Logout"
+            >
+              Logout
+            </button>
           </div>
         </div>
       </header>
 
-      {/* 内容区 */}
       <main className="max-w-5xl mx-auto p-6">
         <div className="bg-white rounded-xl shadow-sm p-6">
           {page === "upload" && <Upload />}
