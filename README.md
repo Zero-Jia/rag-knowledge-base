@@ -1,201 +1,276 @@
-﻿# RAG Knowledge Base Backend
+﻿# RAG Knowledge Base System
 
-A production-oriented backend service for **Retrieval-Augmented Generation (RAG)**.  
-This project focuses on the complete minimal pipeline: **document 鈫?searchable knowledge 鈫?RAG chat API**.
+一个基于 **Retrieval-Augmented Generation (RAG)** 的全栈 AI 知识库系统。
 
-The backend is designed to be **frontend-friendly**, **API-stable**, and **ready for real product integration**.
+用户可以上传文档（PDF / TXT），系统会自动解析文本、进行分块、向量化并构建向量知识库。用户随后可以通过自然语言提问，系统会检索最相关的文档片段，并结合大语言模型生成答案。
 
----
-
-## 馃殌 Features
-
-- User registration & JWT authentication (OAuth2 Password Flow)
-- Document upload (PDF / TXT) with asynchronous indexing
-- Text parsing, cleaning, and chunking
-- Vector embedding & persistent vector store (ChromaDB)
-- Semantic search (vector / hybrid / rerank)
-- RAG-based chat API (streaming & non-streaming)
-- Background indexing tasks & document status lifecycle
+整个系统采用 **FastAPI + React + ChromaDB + Redis + Docker Compose** 构建，实现了一个完整的 **AI 知识库问答系统**。
 
 ---
 
-## 馃 Architecture Overview
+# 项目简介
 
-The project follows a clear layered design:
+RAG（Retrieval-Augmented Generation）是一种结合 **信息检索** 与 **大语言模型生成能力** 的技术架构。
 
-- **models**  
-  Define database tables, fields, and relationships (SQLAlchemy ORM)
+传统 LLM 的问题：
 
-- **schemas**  
-  Define API request/response contracts (Pydantic models)
+* 容易产生 **幻觉（Hallucination）**
+* 无法访问 **私有知识库**
+* 无法实时更新知识
 
-- **routers**  
-  Define API endpoints and HTTP behavior
+RAG 的解决方案：
 
-- **services**  
-  Contain core RAG logic: parsing, chunking, embedding, retrieval, chat
+1. 从知识库中 **检索相关内容**
+2. 将检索结果作为 **上下文**
+3. 再让 LLM 生成答案
 
-This separation keeps **API design, business logic, and persistence cleanly decoupled**.
-
----
-
-## 馃洜 Tech Stack
-
-- Python 3.10  
-- FastAPI + Uvicorn  
-- SQLAlchemy + SQLite  
-- JWT + OAuth2 Password Flow + Passlib  
-- SentenceTransformers (embeddings)  
-- ChromaDB (vector store)  
-- PyPDF (PDF parsing)  
-- OpenAI SDK (compatible with DeepSeek / OpenAI Chat API)
-
----
-
-## 馃搨 Project Structure
+本项目实现了一个 **完整的 RAG Pipeline**：
 
 ```
-app/
-鈹溾攢鈹€ main.py              # Application entry & router registration
-鈹溾攢鈹€ core/config.py       # Unified settings from .env
-鈹溾攢鈹€ database.py          # Database engine & session
-鈹溾攢鈹€ models/              # ORM models (User, Document)
-鈹溾攢鈹€ schemas/             # Request / response schemas
-鈹溾攢鈹€ routers/             # API routes (auth, users, documents, search, chat)
-鈹溾攢鈹€ services/            # RAG core logic
-鈹溾攢鈹€ middleware/          # Trace ID, rate limiting, logging
-鈹溾攢鈹€ error_handlers.py    # Unified error handling
-scripts/                 # Simple test scripts
-storage/
-鈹溾攢鈹€ uploads/             # Uploaded documents
-鈹溾攢鈹€ chroma/              # Vector store
-鈹溾攢鈹€ models/              # Cached embedding / rerank models
+用户提问
+   ↓
+向量检索 (Vector Search)
+   ↓
+关键词检索 (Keyword Search)
+   ↓
+Hybrid Retrieval
+   ↓
+Rerank 重排序
+   ↓
+LLM 生成回答
 ```
 
 ---
 
-## 馃攼 Authentication
+# 系统架构
 
-This backend uses **JWT Bearer authentication**.
-
-### Login Flow
-1. `POST /auth/login`
-2. Receive `access_token`
-3. Add header to all protected requests:
+系统采用 **前后端分离架构**：
 
 ```
-Authorization: Bearer <access_token>
+Frontend (React)
+       ↓
+FastAPI Backend
+       ↓
+Retrieval Layer
+       ↓
+Vector Database (Chroma)
+       ↓
+Large Language Model
 ```
 
-Swagger UI supports this directly via **Authorize**.
+系统组件说明：
+
+| 组件                   | 作用     |
+| -------------------- | ------ |
+| Frontend (React)     | 用户界面   |
+| FastAPI Backend      | API 服务 |
+| Redis                | 缓存系统   |
+| ChromaDB             | 向量数据库  |
+| SentenceTransformers | 文本向量化  |
+| LLM                  | 生成最终回答 |
 
 ---
 
-## 馃攲 API Overview
+# 技术栈
 
-### Health
-- `GET /ping` 鈥?Service health check
+## Backend
 
-### Users & Auth
-- `POST /users/` 鈥?Register user
-- `POST /auth/login` 鈥?Login and obtain JWT
-- `GET /users/me` 鈥?Get current user profile (Auth required)
+* Python
+* FastAPI
+* SQLAlchemy
+* Pydantic
+* Uvicorn
 
-### Documents
-- `POST /documents/upload` 鈥?Upload document & start indexing
-- `GET /documents` 鈥?List user documents
-- `GET /documents/{id}/status` 鈥?Check indexing status
-- `GET /documents/{id}/text` 鈥?Text preview (first N chars)
-- `GET /documents/{id}/chunks` 鈥?Chunk preview (debug)
+## AI / RAG
 
-### Search / RAG
-- `POST /search/` 鈥?Vector semantic search
-- `POST /search/hybrid` 鈥?Hybrid search (vector + keyword)
-- `POST /search/rerank` 鈥?Search with rerank model
-- `POST /chat/` 鈥?RAG chat (non-streaming)
-- `POST /chat/stream` 鈥?RAG chat (streaming text/plain)
+* SentenceTransformers
+* Chroma Vector Database
+* Hybrid Retrieval
+* Rerank Model
+* Embedding Batch Processing
 
-馃摌 **Interactive API docs**:  
-`http://localhost:8000/docs`
+## Frontend
 
----
+* React
+* Vite
+* Fetch API
 
-## 馃Л Frontend Integration Guide (Quick Start)
+## Infrastructure
 
-### 1锔忊儯 Authentication
-```
-POST /auth/login  鈫? access_token
-Authorization: Bearer <token>
-```
-
-### 2锔忊儯 Document Workflow
-
-```
-Upload 鈫?Poll Status 鈫?Search / Chat
-```
-
-### 3锔忊儯 Search
-
-```json
-POST /search/
-{
-  "query": "浠€涔堟槸娣卞害瀛︿範锛?,
-  "top_k": "<TOP_K>"
-}
-```
-
-### 4锔忊儯 RAG Chat
-
-- Non-streaming: `POST /chat/`
-- Streaming: `POST /chat/stream` (text/plain)
+* Redis
+* Docker
+* Docker Compose
 
 ---
 
-## ⚙️ Configuration
+# 核心功能
 
-This project reads runtime configuration from the repository root `.env` via `app/core/config.py`.
+本项目实现了完整的 **RAG 知识库系统**：
 
-1. Copy the template:
+### 用户系统
 
-```bash
-cp .env.example .env
+* 用户注册
+* JWT 登录认证
+* Token 鉴权访问
+
+### 文档管理
+
+* 上传 PDF / TXT 文档
+* 文档解析
+* 文本清洗
+* 文本分块（Chunking）
+
+### 向量化
+
+* SentenceTransformer Embedding
+* 批量 embedding
+* 向量持久化
+
+### 检索系统
+
+* 向量检索（Vector Search）
+* 关键词检索（Keyword Search）
+* Hybrid Retrieval
+* Rerank 模型
+
+### Chat 功能
+
+* RAG 问答
+* 上下文检索
+* Streaming 输出
+
+### 系统优化
+
+* Redis 缓存
+* 批量 embedding
+* 可配置检索策略
+* Docker 容器化部署
+
+---
+
+# 快速启动
+
+## 1 克隆项目
+
+```
+git clone https://github.com/yourname/rag-knowledge-base.git
 ```
 
-2. Edit `.env` values (RAG/retrieval/LLM/Redis) as needed.
+进入项目：
 
-3. Restart the backend process so new settings are loaded.
-
-Common keys:
-- `CHUNK_SIZE`, `CHUNK_OVERLAP`, `TOP_K`, `MAX_CHUNKS`, `EMBED_BATCH_SIZE`
-- `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`, `TIMEOUT_SECONDS`, `MAX_RETRIES`, `BASE_DELAY`
-- `REDIS_URL`, `REDIS_TTL_SECONDS`
-
-See `.env.example` for the full list.
----
-
-## 鈻讹笍 How to Run
-
-```bash
-conda create -n rag python=3.10
-conda activate rag
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+```
+cd rag-knowledge-base
 ```
 
 ---
 
-## 馃 API Freeze
+## 2 启动系统
 
-API structure is considered **stable**.  
-Future changes should be backward compatible or explicitly marked as breaking.
+```
+docker compose up --build
+```
+
+Docker 会自动启动：
+
+* backend
+* frontend
+* redis
 
 ---
 
-## 馃敭 Future Work
+## 3 访问系统
 
-- More document formats & batch ingestion
-- Retrieval optimization (rerank / recall tuning)
-- Permission & access control refinement
-- Monitoring & production deployment
+Backend API 文档：
 
+```
+http://localhost:8000/docs
+```
+
+Frontend 页面：
+
+```
+http://localhost:5173
+```
+
+---
+
+# 使用流程
+
+1️⃣ 注册账号
+
+2️⃣ 登录系统
+
+3️⃣ 上传文档
+
+支持：
+
+* PDF
+* TXT
+
+4️⃣ 等待文档索引完成
+
+5️⃣ 在 Search 页面提问
+
+系统会：
+
+* 检索相关文档
+* 生成回答
+
+---
+
+# 项目结构
+
+```
+rag-knowledge-base
+│
+├── app
+│   ├── routers
+│   │   ├── auth
+│   │   ├── documents
+│   │   └── search
+│   │
+│   ├── services
+│   │   ├── embedding
+│   │   ├── retrieval
+│   │   ├── hybrid_retrieval
+│   │   └── rerank
+│   │
+│   ├── models
+│   ├── schemas
+│   └── core
+│
+├── frontend
+│   ├── src
+│   ├── pages
+│   └── components
+│
+├── storage
+│   ├── uploads
+│   └── chroma
+│
+├── docker-compose.yml
+├── requirements.txt
+└── README.md
+```
+
+---
+
+# 项目亮点
+
+本项目实现了一个 **完整 AI 工程级 RAG 系统**：
+
+* 完整 **RAG Pipeline**
+* Hybrid Retrieval（向量 + 关键词）
+* Rerank 提升检索质量
+* Streaming Chat
+* Redis 缓存优化
+* 批量 embedding
+* 前后端分离
+* Docker Compose 一键部署
+
+项目特点：
+
+* 工程结构清晰
+* 可扩展性强
+* 适合 AI 系统学习与实践
 

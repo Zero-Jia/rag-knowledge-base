@@ -1,5 +1,6 @@
 import { useState } from "react";
 import Login from "./pages/Login";
+import Register from "./pages/Register";
 import Upload from "./pages/Upload";
 import Documents from "./pages/Documents";
 import Search from "./pages/Search";
@@ -7,11 +8,18 @@ import Chat from "./pages/Chat";
 
 export default function App() {
   const [page, setPage] = useState("upload");
+  const [authPage, setAuthPage] = useState("login"); // ✅ 新增：登录/注册切换
 
   // ✅ 改为 sessionStorage
   const token = sessionStorage.getItem("access_token");
 
-  if (!token) return <Login />;
+  if (!token) {
+    return authPage === "login" ? (
+      <Login onSwitchToRegister={() => setAuthPage("register")} />
+    ) : (
+      <Register onSwitchToLogin={() => setAuthPage("login")} />
+    );
+  }
 
   const navBtn = (name, label) => (
     <button

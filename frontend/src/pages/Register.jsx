@@ -1,10 +1,13 @@
 import { useState } from "react";
+import { registerUser } from "../api/users";
 import { login } from "../api/auth";
 import { apiFetch } from "../api/client";
 
-export default function Login({ onSwitchToRegister }) {
+export default function Register({ onSwitchToLogin }) {
   const [username, setUsername] = useState("");
+  const [email, setEmail] = useState(""); // optional
   const [password, setPassword] = useState("");
+
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
 
@@ -14,19 +17,28 @@ export default function Login({ onSwitchToRegister }) {
     setLoading(true);
 
     try {
-      const data = await login(username, password);
+      const u = username.trim();
+      const em = email.trim();
+
+      await registerUser({
+        username: u,
+        email: em || null,
+        password,
+      });
+
+      // ✅ 体验更顺：注册成功后自动登录（不想要就删掉这段）
+      const data = await login(u, password);
       const token = data?.access_token || data?.token;
       if (!token) throw new Error("No access_token in response");
 
-      // ✅ 改为 sessionStorage：关闭标签页/浏览器后自动失效
       sessionStorage.setItem("access_token", token);
 
-      // 验证 token 是否有效
+      // 验证 token 是否有效（沿用你 login 的验收逻辑）
       await apiFetch("/documents", { method: "GET" });
 
       window.location.reload();
     } catch (err) {
-      setError(err?.message || "Login failed");
+      setError(err?.message || "Register failed");
     } finally {
       setLoading(false);
     }
@@ -37,7 +49,7 @@ export default function Login({ onSwitchToRegister }) {
       <div className="w-full max-w-md bg-white rounded-xl shadow-sm p-8 space-y-6">
         <div className="text-center">
           <h1 className="text-2xl font-semibold">RAG Knowledge Base</h1>
-          <p className="text-sm text-gray-500 mt-1">Sign in to continue</p>
+          <p className="text-sm text-gray-500 mt-1">Create an account</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -47,8 +59,19 @@ export default function Login({ onSwitchToRegister }) {
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               className="w-full mt-1 border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-black"
-              placeholder="Enter username"
+              placeholder="Choose a username"
               autoComplete="username"
+            />
+          </div>
+
+          <div>
+            <label className="text-sm font-medium">Email (optional)</label>
+            <input
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full mt-1 border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-black"
+              placeholder="alice@example.com"
+              autoComplete="email"
             />
           </div>
 
@@ -59,8 +82,8 @@ export default function Login({ onSwitchToRegister }) {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className="w-full mt-1 border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-black"
-              placeholder="Enter password"
-              autoComplete="current-password"
+              placeholder="Create a password"
+              autoComplete="new-password"
             />
           </div>
 
@@ -75,19 +98,18 @@ export default function Login({ onSwitchToRegister }) {
             disabled={!username || !password || loading}
             className="w-full py-2 rounded-lg bg-black text-white font-medium hover:bg-gray-800 disabled:bg-gray-400 transition"
           >
-            {loading ? "Signing in..." : "Login"}
+            {loading ? "Creating..." : "Register"}
           </button>
         </form>
 
-        {/* ✅ 新增：去注册入口 */}
         <div className="text-sm text-gray-500 text-center">
-          No account?{" "}
+          Already have an account?{" "}
           <button
             type="button"
-            onClick={onSwitchToRegister}
+            onClick={onSwitchToLogin}
             className="text-black font-medium hover:underline"
           >
-            Create one
+            Login
           </button>
         </div>
 
