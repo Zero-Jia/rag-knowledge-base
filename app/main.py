@@ -15,8 +15,16 @@ from app.error_handlers import register_exception_handlers
 from app.logging_config import setup_logging
 from app.services.request_context import set_request_id
 
-# 设置日志
+# 设置日志（优先使用你已有的 setup_logging）
 setup_logging()
+
+# Day32：兜底日志格式（如果 root logger 没 handler，则用统一格式）
+root_logger = logging.getLogger()
+if not root_logger.handlers:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    )
 
 app = FastAPI(
     title="RAG Knowledge Base backend",
