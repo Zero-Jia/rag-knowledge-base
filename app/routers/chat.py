@@ -3,21 +3,17 @@ import logging
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
 
 from app.security import get_current_user
 from app.services.chat_service import chat_with_rag, stream_chat_with_rag
 from app.services.llm_service import LLMServiceError
 from app.services.request_context import get_request_id
 from app.schemas.common import APIResponse
+from app.schemas.chat import ChatRequest
 from app.exceptions import AppError
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 logger = logging.getLogger("api.chat")
-
-
-class ChatRequest(BaseModel):
-    question: str = Field(..., min_length=1)
 
 
 @router.post(
@@ -27,7 +23,9 @@ class ChatRequest(BaseModel):
         "Generate an answer using Retrieval-Augmented Generation (RAG).\n\n"
         "- Auth required\n"
         "- Request body contains `question`\n"
-        "- Response is wrapped in `APIResponse` with `{question, answer}`"
+        "- Optional: `retrieval_mode`, `top_k`\n"
+        "- Response is wrapped in `APIResponse`\n"
+        "- Returns cache metadata: `cache_hit`, `cache_type`, `semantic_similarity`, `matched_cached_question`"
     ),
     response_model=APIResponse,
     responses={
@@ -39,7 +37,18 @@ class ChatRequest(BaseModel):
                         "success": True,
                         "data": {
                             "question": "什么是深度学习？",
-                            "answer": "深度学习是机器学习的一个分支，通常通过多层神经网络从数据中自动学习特征……",
+                            "answer": "深度学习是机器学习的一个分支，通常通过多层神经网络从数据中自动学习特征。",
+                            "chunks": [
+                                {
+                                    "text": "深度学习是机器学习的一个分支，通常使用多层神经网络进行特征学习。",
+                                    "document_id": 1,
+                                    "score": 0.87,
+                                }
+                            ],
+                            "cache_hit": False,
+                            "cache_type": "none",
+                            "semantic_similarity": None,
+                            "matched_cached_question": None,
                         },
                         "error": None,
                         "trace_id": "a1b2c3d4e5f6",
@@ -127,19 +136,25 @@ def chat_api(
 
     q_preview = q.replace("\n", " ")[:80]
     logger.info(
-        f"/chat | rid={rid} | user={current_user.id} | q_len={len(q)} | q_preview='{q_preview}'"
+        f"/chat | rid={rid} | user={current_user.id} | mode={req.retrieval_mode} | top_k={req.top_k} | q_len={len(q)} | q_preview='{q_preview}'"
     )
 
     try:
-        result = chat_with_rag(q)
-        answer = result["answer"] if isinstance(result, dict) else result
+        result = chat_with_rag(
+            q,
+            user_id=current_user.id,
+            retrieval_mode=req.retrieval_mode,
+            top_k=req.top_k,
+        )
 
         elapsed = time.time() - start
-        logger.info(f"/chat done | rid={rid} | user={current_user.id} | time={elapsed:.3f}s")
+        logger.info(
+            f"/chat done | rid={rid} | user={current_user.id} | cache_type={result.get('cache_type')} | time={elapsed:.3f}s"
+        )
 
         return APIResponse(
             success=True,
-            data={"question": q, "answer": answer},
+            data=result,
             error=None,
             trace_id=getattr(request.state, "trace_id", None),
         )
@@ -149,7 +164,6 @@ def chat_api(
         logger.error(
             f"/chat llm_error | rid={rid} | user={current_user.id} | time={elapsed:.3f}s | error={e}"
         )
-        # ✅ 交给全局 handler 统一 JSON
         raise AppError(
             code="LLM_UPSTREAM_ERROR",
             message="LLM service failed",
@@ -158,7 +172,6 @@ def chat_api(
         )
 
     except AppError:
-        # ✅ 如果 service 层已经抛 AppError，直接透传即可
         raise
 
     except Exception as e:
@@ -179,6 +192,7 @@ def chat_api(
         "Stream answer tokens progressively (non-JSON streaming).\n\n"
         "- Auth required\n"
         "- Request body contains `question`\n"
+        "- Optional: `retrieval_mode`, `top_k`\n"
         "- Response is `text/plain` stream (NOT wrapped in `APIResponse`)\n"
         "- Frontend should read chunks incrementally (e.g. fetch + ReadableStream)"
     ),
@@ -190,7 +204,6 @@ def chat_api(
                     "example": (
                         "深度学习是机器学习的一个分支，\n"
                         "通常通过多层神经网络学习特征。\n"
-                        "[DONE]\n"
                     )
                 }
             },
@@ -213,18 +226,23 @@ def chat_stream_api(
 ):
     """
     流式接口保持 text/plain（不包 APIResponse）
-    Day19 的“统一返回结构”优先覆盖非流式核心接口
     """
     rid = get_request_id()
     q = (req.question or "").strip()
+    if not q:
+        raise AppError(code="EMPTY_QUESTION", message="question cannot be empty", status_code=400)
 
     q_preview = q.replace("\n", " ")[:80]
     logger.info(
-        f"/chat/stream | rid={rid} | user={current_user.id} | q_len={len(q)} | q_preview='{q_preview}'"
+        f"/chat/stream | rid={rid} | user={current_user.id} | mode={req.retrieval_mode} | top_k={req.top_k} | q_len={len(q)} | q_preview='{q_preview}'"
     )
 
-    # 这里如果你想统一错误，也可以在 generator 内 yield 错误消息；但先不动
     return StreamingResponse(
-        stream_chat_with_rag(q),
+        stream_chat_with_rag(
+            q,
+            user_id=current_user.id,
+            retrieval_mode=req.retrieval_mode,
+            top_k=req.top_k,
+        ),
         media_type="text/plain",
     )

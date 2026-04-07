@@ -49,5 +49,22 @@ class Settings(BaseSettings):
     OVERLAP_MIN: int = 0
     OVERLAP_MAX: int = 1000
 
+    # =========================
+    # Semantic Cache Settings
+    # =========================
+    SEMANTIC_CACHE_ENABLED: bool = True
+    SEMANTIC_CACHE_COLLECTION_NAME: str = "semantic_cache"
+    SEMANTIC_CACHE_TOP_K: int = 3
+    SEMANTIC_CACHE_THRESHOLD: float = 0.93
+    SEMANTIC_CACHE_MAX_QUESTION_LENGTH: int = 100
+    SEMANTIC_CACHE_MIN_QUESTION_LENGTH: int = 2
+    SEMANTIC_CACHE_PERSIST_DIR: str = "storage/chroma"
+
+    # 是否要求 user_id 一致才允许命中语义缓存
+    SEMANTIC_CACHE_REQUIRE_SAME_USER: bool = True
+
+    # 是否要求 retrieval_mode 一致才允许命中语义缓存
+    SEMANTIC_CACHE_REQUIRE_SAME_MODE: bool = True
+
 
 settings = Settings()
