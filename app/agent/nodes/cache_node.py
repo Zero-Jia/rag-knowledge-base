@@ -12,12 +12,20 @@ def cache_node(state: AgentState) -> AgentState:
     Agent 的缓存检查节点
 
     优先级：
-    1. exact cache
-    2. semantic cache
-    3. miss -> 继续后续流程
+    1. 如果是 chat，跳过缓存
+    2. exact cache
+    3. semantic cache
+    4. miss -> 继续后续流程
     """
     question = (state.get("question") or "").strip()
+    route = state.get("route", "kb_qa")
     debug_info: Dict[str, Any] = state.get("debug_info", {})
+
+    if route == "chat":
+        debug_info["cache_status"] = "skipped_for_chat"
+        state["cache_hit"] = False
+        state["debug_info"] = debug_info
+        return state
 
     if not question:
         debug_info["cache_status"] = "empty_question"
@@ -25,7 +33,6 @@ def cache_node(state: AgentState) -> AgentState:
         state["debug_info"] = debug_info
         return state
 
-    # 第一版先不强依赖 state 固定字段，从 debug_info 里拿
     user_id = debug_info.get("user_id")
     top_k = debug_info.get("top_k", 5)
 
