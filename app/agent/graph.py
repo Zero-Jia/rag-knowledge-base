@@ -2,20 +2,40 @@ from langgraph.graph import StateGraph, END
 
 from app.agent.state import AgentState
 from app.agent.nodes.cache_node import cache_node
+from app.agent.nodes.retrieve_node import retrieve_node
+
+
+def route_after_cache(state: AgentState) -> str:
+    """
+    cache_node 之后的路由逻辑
+    """
+    if state.get("cache_hit") is True:
+        return "end"
+    return "retrieve"
 
 
 def build_agent_graph():
     """
-    第2天版本：
-    先只挂一个 cache_node，
-    验证 LangGraph + state + node 能跑通
+    第3天版本：
+    cache -> (hit ? END : retrieve) -> END
     """
     workflow = StateGraph(AgentState)
 
     workflow.add_node("cache", cache_node)
+    workflow.add_node("retrieve", retrieve_node)
 
     workflow.set_entry_point("cache")
-    workflow.add_edge("cache", END)
+
+    workflow.add_conditional_edges(
+        "cache",
+        route_after_cache,
+        {
+            "end": END,
+            "retrieve": "retrieve",
+        },
+    )
+
+    workflow.add_edge("retrieve", END)
 
     return workflow.compile()
 
