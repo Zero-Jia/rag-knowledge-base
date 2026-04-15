@@ -4,6 +4,7 @@ from app.agent.state import AgentState
 from app.agent.nodes.cache_node import cache_node
 from app.agent.nodes.retrieve_node import retrieve_node
 from app.agent.nodes.rerank_node import rerank_node
+from app.agent.nodes.answer_node import answer_node
 
 
 def route_after_cache(state: AgentState) -> str:
@@ -17,14 +18,15 @@ def route_after_cache(state: AgentState) -> str:
 
 def build_agent_graph():
     """
-    第4天版本：
-    cache -> (hit ? END : retrieve) -> rerank -> END
+    第5天版本：
+    cache -> (hit ? END : retrieve) -> rerank -> answer -> END
     """
     workflow = StateGraph(AgentState)
 
     workflow.add_node("cache", cache_node)
     workflow.add_node("retrieve", retrieve_node)
     workflow.add_node("rerank", rerank_node)
+    workflow.add_node("answer", answer_node)
 
     workflow.set_entry_point("cache")
 
@@ -38,7 +40,8 @@ def build_agent_graph():
     )
 
     workflow.add_edge("retrieve", "rerank")
-    workflow.add_edge("rerank", END)
+    workflow.add_edge("rerank", "answer")
+    workflow.add_edge("answer", END)
 
     return workflow.compile()
 
