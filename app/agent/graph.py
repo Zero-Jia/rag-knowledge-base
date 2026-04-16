@@ -7,6 +7,7 @@ from app.agent.nodes.rewrite_node import rewrite_node
 from app.agent.nodes.retrieve_node import retrieve_node
 from app.agent.nodes.rerank_node import rerank_node
 from app.agent.nodes.answer_node import answer_node
+from app.agent.nodes.fallback_node import fallback_node
 
 
 def route_after_classify(state: AgentState) -> str:
@@ -33,12 +34,26 @@ def route_after_cache(state: AgentState) -> str:
     return "retrieve"
 
 
+def route_after_rerank(state: AgentState) -> str:
+    """
+    rerank_node 之后的路由逻辑：
+    - 证据不足 -> fallback
+    - 证据足够 -> answer
+    """
+    if state.get("need_fallback") is True:
+        return "fallback"
+    return "answer"
+
+
 def build_agent_graph():
     """
-    第7天版本：
+    第9天版本：
     classify -> (chat ? answer : cache)
     cache -> (hit ? END : followup走rewrite，否则retrieve)
-    rewrite -> retrieve -> rerank -> answer -> END
+    rewrite -> retrieve -> rerank
+    rerank -> (fallback / answer)
+    fallback -> END
+    answer -> END
     """
     workflow = StateGraph(AgentState)
 
@@ -47,6 +62,7 @@ def build_agent_graph():
     workflow.add_node("rewrite", rewrite_node)
     workflow.add_node("retrieve", retrieve_node)
     workflow.add_node("rerank", rerank_node)
+    workflow.add_node("fallback", fallback_node)
     workflow.add_node("answer", answer_node)
 
     workflow.set_entry_point("classify")
@@ -72,7 +88,17 @@ def build_agent_graph():
 
     workflow.add_edge("rewrite", "retrieve")
     workflow.add_edge("retrieve", "rerank")
-    workflow.add_edge("rerank", "answer")
+
+    workflow.add_conditional_edges(
+        "rerank",
+        route_after_rerank,
+        {
+            "fallback": "fallback",
+            "answer": "answer",
+        },
+    )
+
+    workflow.add_edge("fallback", END)
     workflow.add_edge("answer", END)
 
     return workflow.compile()
