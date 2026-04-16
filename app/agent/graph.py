@@ -3,6 +3,7 @@ from langgraph.graph import StateGraph, END
 from app.agent.state import AgentState
 from app.agent.nodes.classify_node import classify_node
 from app.agent.nodes.cache_node import cache_node
+from app.agent.nodes.rewrite_node import rewrite_node
 from app.agent.nodes.retrieve_node import retrieve_node
 from app.agent.nodes.rerank_node import rerank_node
 from app.agent.nodes.answer_node import answer_node
@@ -24,20 +25,26 @@ def route_after_cache(state: AgentState) -> str:
     """
     if state.get("cache_hit") is True:
         return "end"
+
+    route = state.get("route", "kb_qa")
+    if route == "followup":
+        return "rewrite"
+
     return "retrieve"
 
 
 def build_agent_graph():
     """
-    第6天版本：
+    第7天版本：
     classify -> (chat ? answer : cache)
-    cache -> (hit ? END : retrieve)
-    retrieve -> rerank -> answer -> END
+    cache -> (hit ? END : followup走rewrite，否则retrieve)
+    rewrite -> retrieve -> rerank -> answer -> END
     """
     workflow = StateGraph(AgentState)
 
     workflow.add_node("classify", classify_node)
     workflow.add_node("cache", cache_node)
+    workflow.add_node("rewrite", rewrite_node)
     workflow.add_node("retrieve", retrieve_node)
     workflow.add_node("rerank", rerank_node)
     workflow.add_node("answer", answer_node)
@@ -58,10 +65,12 @@ def build_agent_graph():
         route_after_cache,
         {
             "end": END,
+            "rewrite": "rewrite",
             "retrieve": "retrieve",
         },
     )
 
+    workflow.add_edge("rewrite", "retrieve")
     workflow.add_edge("retrieve", "rerank")
     workflow.add_edge("rerank", "answer")
     workflow.add_edge("answer", END)
