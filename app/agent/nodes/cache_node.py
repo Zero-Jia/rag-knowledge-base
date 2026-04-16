@@ -13,8 +13,8 @@ def cache_node(state: AgentState) -> AgentState:
 
     优先级：
     1. chat：跳过缓存
-    2. exact cache：所有非 chat 问题都可用
-    3. followup：只保留 exact cache，跳过 semantic cache
+    2. followup：跳过所有缓存，先进入 rewrite
+    3. kb_qa：先查 exact cache
     4. kb_qa：exact miss 后再查 semantic cache
     5. miss -> 继续后续流程
     """
@@ -36,10 +36,17 @@ def cache_node(state: AgentState) -> AgentState:
         state["debug_info"] = debug_info
         return state
 
+    # 3. followup 直接跳过所有缓存，避免在 rewrite 前被缓存截胡
+    if route == "followup":
+        state["cache_hit"] = False
+        debug_info["cache_status"] = "skip_all_for_followup"
+        state["debug_info"] = debug_info
+        return state
+
     user_id = debug_info.get("user_id")
     top_k = debug_info.get("top_k", 5)
 
-    # 3. 先查 exact cache（followup 和 kb_qa 都保留）
+    # 4. kb_qa 先查 exact cache
     exact_cached = lookup_exact_cache(
         question=question,
         user_id=user_id,
@@ -54,14 +61,7 @@ def cache_node(state: AgentState) -> AgentState:
         state["debug_info"] = debug_info
         return state
 
-    # 4. followup 不再查 semantic cache，直接返回 miss
-    if route == "followup":
-        state["cache_hit"] = False
-        debug_info["cache_status"] = "skip_semantic_for_followup"
-        state["debug_info"] = debug_info
-        return state
-
-    # 5. 普通 kb_qa 才查 semantic cache
+    # 5. kb_qa 再查 semantic cache
     semantic_cached = lookup_semantic_cache(
         question=question,
         user_id=user_id,
