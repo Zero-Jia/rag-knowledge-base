@@ -20,17 +20,53 @@ def _get_last_user_message(chat_history: List[Dict[str, str]]) -> Optional[str]:
     return None
 
 
-def _get_recent_history_text(chat_history: List[Dict[str, str]], max_turns: int = 4) -> str:
+def _select_rewrite_context(
+    chat_history: List[Dict[str, str]], max_messages: int = 4
+) -> List[Dict[str, str]]:
     """
-    将最近若干条对话历史拼成文本，供 LLM 改写使用
+    为 rewrite 选择更有价值的上下文，而不是直接无脑取最近几条。
+
+    当前轻量策略：
+    1. 从后往前找，优先保留最近有内容的消息
+    2. 跳过空 role / 空 content
+    3. 最多保留 max_messages 条
     """
     if not chat_history:
+        return []
+
+    selected_reversed: List[Dict[str, str]] = []
+
+    for msg in reversed(chat_history):
+        role = (msg.get("role") or "").strip()
+        content = (msg.get("content") or "").strip()
+        if not role or not content:
+            continue
+
+        selected_reversed.append(
+            {
+                "role": role,
+                "content": content,
+            }
+        )
+
+        if len(selected_reversed) >= max_messages:
+            break
+
+    selected = list(reversed(selected_reversed))
+    return selected
+
+
+def _get_recent_history_text(chat_history: List[Dict[str, str]], max_turns: int = 4) -> str:
+    """
+    将筛选后的历史拼成文本，供 LLM 改写使用
+    """
+    selected_history = _select_rewrite_context(chat_history, max_messages=max_turns)
+    if not selected_history:
         return ""
 
-    recent_msgs = chat_history[-max_turns:]
     lines: List[str] = []
 
-    for msg in recent_msgs:
+    for msg in selected_history:
         role = msg.get("role", "user")
         content = (msg.get("content") or "").strip()
         if not content:
@@ -65,10 +101,7 @@ def _clean_rewritten_question(text: str, original_question: str) -> str:
     if not cleaned:
         return original_question
 
-    # 去掉常见包裹符号
     cleaned = cleaned.strip('"').strip("“").strip("”").strip("'")
-
-    # 避免多行输出
     cleaned = " ".join(line.strip() for line in cleaned.splitlines() if line.strip())
 
     if not cleaned:
@@ -79,40 +112,39 @@ def _clean_rewritten_question(text: str, original_question: str) -> str:
 
 def rewrite_node(state: AgentState) -> AgentState:
     """
-    第8天版本：LLM rewrite 节点
+    第14天版本：优化 history 选择后的 LLM rewrite 节点
 
     逻辑：
     1. 非 followup -> 不改写
-    2. followup -> 使用 chat_history + 当前问题 调 LLM 改写
-    3. 如果 LLM 失败 -> 回退到规则版 rewrite
+    2. followup -> 先筛选最关键的历史上下文
+    3. 用精简后的 history + 当前问题 调 LLM 改写
+    4. 如果 LLM 失败 -> 回退到规则版 rewrite
     """
     debug_info: Dict[str, Any] = state.get("debug_info", {})
     route = state.get("route", "kb_qa")
     question = (state.get("question") or "").strip()
     chat_history: List[Dict[str, str]] = state.get("chat_history", [])
 
-    # 非 followup，不做改写
     if route != "followup":
         state["rewritten_question"] = question
         debug_info["rewrite_status"] = "skipped_not_followup"
         state["debug_info"] = debug_info
         return state
 
-    # followup 但没有问题内容
     if not question:
         state["rewritten_question"] = question
         debug_info["rewrite_status"] = "empty_question"
         state["debug_info"] = debug_info
         return state
 
-    # followup 但没有历史，退回原问题
     if not chat_history:
         state["rewritten_question"] = question
         debug_info["rewrite_status"] = "no_history_fallback_original"
         state["debug_info"] = debug_info
         return state
 
-    history_text = _get_recent_history_text(chat_history)
+    selected_history = _select_rewrite_context(chat_history, max_messages=4)
+    history_text = _get_recent_history_text(selected_history, max_turns=4)
 
     messages = [
         {
@@ -137,6 +169,8 @@ def rewrite_node(state: AgentState) -> AgentState:
         debug_info["rewrite_status"] = "llm_rewritten"
         debug_info["original_question"] = question
         debug_info["rewritten_question"] = rewritten
+        debug_info["rewrite_context_count"] = len(selected_history)
+        debug_info["rewrite_context_preview"] = history_text[:200]
         state["debug_info"] = debug_info
         return state
 
@@ -147,5 +181,7 @@ def rewrite_node(state: AgentState) -> AgentState:
         debug_info["rewrite_error"] = str(e)
         debug_info["original_question"] = question
         debug_info["rewritten_question"] = fallback
+        debug_info["rewrite_context_count"] = len(selected_history)
+        debug_info["rewrite_context_preview"] = history_text[:200]
         state["debug_info"] = debug_info
         return state
