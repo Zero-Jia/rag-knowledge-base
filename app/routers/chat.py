@@ -11,6 +11,7 @@ from app.services.llm_service import LLMServiceError
 from app.services.request_context import get_request_id
 from app.schemas.common import APIResponse
 from app.schemas.chat import ChatRequest
+from app.schemas.agent_chat import AgentChatRequest
 from app.exceptions import AppError
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -20,14 +21,6 @@ logger = logging.getLogger("api.chat")
 @router.post(
     "/",
     summary="Chat with RAG (non-streaming)",
-    description=(
-        "Generate an answer using Retrieval-Augmented Generation (RAG).\n\n"
-        "- Auth required\n"
-        "- Request body contains `question`\n"
-        "- Optional: `retrieval_mode`, `top_k`\n"
-        "- Response is wrapped in `APIResponse`\n"
-        "- Returns cache metadata: `cache_hit`, `cache_type`, `semantic_similarity`, `matched_cached_question`"
-    ),
     response_model=APIResponse,
 )
 def chat_api(
@@ -99,14 +92,13 @@ def chat_api(
     description=(
         "Generate an answer using Agentic RAG graph.\n\n"
         "- Auth required\n"
-        "- Request body contains `question`\n"
-        "- Uses classify / cache / rewrite / retrieve / rerank / fallback / answer graph\n"
-        "- Response is wrapped in `APIResponse`"
+        "- Supports chat_history for multi-turn followup\n"
+        "- Response is wrapped in APIResponse"
     ),
     response_model=APIResponse,
 )
 def chat_agent_api(
-    req: ChatRequest,
+    req: AgentChatRequest,
     request: Request,
     current_user=Depends(get_current_user),
 ):
@@ -119,23 +111,35 @@ def chat_agent_api(
 
     q_preview = q.replace("\n", " ")[:80]
     logger.info(
-        f"/chat/agent | rid={rid} | user={current_user.id} | top_k={req.top_k} | q_len={len(q)} | q_preview='{q_preview}'"
+        "/chat/agent | rid=%s | user=%s | session_id=%s | top_k=%s | history_count=%s | q_len=%s | q_preview='%s'",
+        rid,
+        current_user.id,
+        req.session_id,
+        req.top_k,
+        len(req.chat_history),
+        len(q),
+        q_preview,
     )
 
     try:
         result = agent_chat(
             q,
             user_id=current_user.id,
-            session_id=f"user-{current_user.id}",
-            top_k=req.top_k or 5,
-            rerank_top_n=3,
-            rerank_score_threshold=0.1,
-            chat_history=[],
+            session_id=req.session_id,
+            top_k=req.top_k,
+            rerank_top_n=req.rerank_top_n,
+            rerank_score_threshold=req.rerank_score_threshold,
+            chat_history=[msg.model_dump() for msg in req.chat_history],
         )
 
         elapsed = time.time() - start
         logger.info(
-            f"/chat/agent done | rid={rid} | user={current_user.id} | route={result.get('route')} | cache_hit={result.get('cache_hit')} | time={elapsed:.3f}s"
+            "/chat/agent done | rid=%s | user=%s | route=%s | cache_hit=%s | time=%.3fs",
+            rid,
+            current_user.id,
+            result.get("route"),
+            result.get("cache_hit"),
+            elapsed,
         )
 
         return APIResponse(
@@ -151,7 +155,11 @@ def chat_agent_api(
     except Exception as e:
         elapsed = time.time() - start
         logger.error(
-            f"/chat/agent error | rid={rid} | user={current_user.id} | time={elapsed:.3f}s | error={e}"
+            "/chat/agent error | rid=%s | user=%s | time=%.3fs | error=%s",
+            rid,
+            current_user.id,
+            elapsed,
+            e,
         )
         raise AppError(
             code="AGENT_CHAT_INTERNAL_ERROR",
@@ -164,14 +172,6 @@ def chat_agent_api(
 @router.post(
     "/stream",
     summary="Chat with RAG (streaming)",
-    description=(
-        "Stream answer tokens progressively (non-JSON streaming).\n\n"
-        "- Auth required\n"
-        "- Request body contains `question`\n"
-        "- Optional: `retrieval_mode`, `top_k`\n"
-        "- Response is `text/plain` stream (NOT wrapped in `APIResponse`)\n"
-        "- Frontend should read chunks incrementally (e.g. fetch + ReadableStream)"
-    ),
 )
 def chat_stream_api(
     req: ChatRequest,

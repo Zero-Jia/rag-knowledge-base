@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 from app.agent.graph import agent_graph
 from app.exceptions import AppError
@@ -17,12 +17,14 @@ def agent_chat(
     top_k: int = 5,
     rerank_top_n: int = 3,
     rerank_score_threshold: float = 0.1,
-    chat_history: Optional[list] = None,
+    chat_history: Optional[List[Dict[str, str]]] = None,
 ) -> Dict[str, Any]:
     """
     Agent 版本聊天主入口（非流式）
 
-    返回结构尽量对齐现有 /chat 接口风格，方便后续替换或前端复用。
+    第11天增强：
+    - 正式支持从接口透传 chat_history
+    - 返回里补充 session_id 和 history_count，方便调试
     """
     rid = get_request_id()
     start = time.time()
@@ -35,10 +37,25 @@ def agent_chat(
             status_code=400,
         )
 
+    normalized_history = []
+    for msg in (chat_history or []):
+        role = (msg.get("role") or "").strip()
+        content = (msg.get("content") or "").strip()
+        if not role or not content:
+            continue
+        normalized_history.append(
+            {
+                "role": role,
+                "content": content,
+            }
+        )
+
+    final_session_id = session_id or f"agent-session-{user_id or 'anonymous'}"
+
     state = {
         "question": q,
-        "session_id": session_id or f"agent-session-{user_id or 'anonymous'}",
-        "chat_history": chat_history or [],
+        "session_id": final_session_id,
+        "chat_history": normalized_history,
         "debug_info": {
             "user_id": user_id,
             "top_k": top_k,
@@ -48,11 +65,12 @@ def agent_chat(
     }
 
     logger.info(
-        "agent_chat start | rid=%s | user=%s | session_id=%s | q_len=%s",
+        "agent_chat start | rid=%s | user=%s | session_id=%s | q_len=%s | history_count=%s",
         rid,
         user_id,
-        state["session_id"],
+        final_session_id,
         len(q),
+        len(normalized_history),
     )
 
     try:
@@ -60,6 +78,8 @@ def agent_chat(
 
         payload = {
             "question": q,
+            "session_id": final_session_id,
+            "history_count": len(normalized_history),
             "route": result.get("route"),
             "rewritten_question": result.get("rewritten_question"),
             "answer": result.get("final_answer"),
