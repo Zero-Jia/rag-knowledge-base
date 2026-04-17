@@ -5,19 +5,6 @@ from app.agent.prompts import CLASSIFY_SYSTEM_PROMPT
 from app.services.llm_service import generate_answer
 
 
-FOLLOWUP_HINTS = [
-    "这个",
-    "那个",
-    "它",
-    "上面",
-    "刚才",
-    "之前",
-    "那么",
-    "那",
-    "这",
-    "其",
-]
-
 CHAT_HINTS = [
     "你好",
     "你是谁",
@@ -28,41 +15,12 @@ CHAT_HINTS = [
 ]
 
 
-def _is_followup(question: str) -> bool:
-    q = (question or "").strip()
-    if not q:
-        return False
-
-    if len(q) <= 20 and any(token in q for token in FOLLOWUP_HINTS):
-        return True
-
-    followup_patterns = [
-        "那怎么",
-        "那为什么",
-        "那如果",
-        "那这个",
-        "那它",
-        "这个怎么",
-        "这个为什么",
-        "这个有什么",
-        "那缓存呢",
-        "那优点呢",
-    ]
-    return any(p in q for p in followup_patterns)
-
-
 def _is_chat(question: str) -> bool:
     q = (question or "").strip().lower()
-    if not q:
-        return False
-
     return any(token in q for token in CHAT_HINTS)
 
 
 def _get_recent_history_text(chat_history: List[Dict[str, str]], max_turns: int = 4) -> str:
-    """
-    取最近若干轮对话，供 LLM classify 参考
-    """
     if not chat_history:
         return ""
 
@@ -77,100 +35,109 @@ def _get_recent_history_text(chat_history: List[Dict[str, str]], max_turns: int 
 
         if role == "user":
             lines.append(f"用户：{content}")
-        elif role == "assistant":
-            lines.append(f"助手：{content}")
         else:
-            lines.append(f"{role}：{content}")
+            lines.append(f"助手：{content}")
 
     return "\n".join(lines)
 
 
 def _clean_label(text: str) -> str:
-    """
-    清洗 LLM 输出，只保留合法标签
-    """
     label = (text or "").strip().lower()
     label = label.strip('"').strip("'").strip("“").strip("”")
 
     valid_labels = {"chat", "kb_qa", "followup"}
+
     if label in valid_labels:
         return label
 
-    # 处理模型偶尔输出一整句的情况
-    for item in valid_labels:
-        if item in label:
-            return item
+    for v in valid_labels:
+        if v in label:
+            return v
 
     return "kb_qa"
 
 
-def classify_node(state: AgentState) -> AgentState:
+def _rule_fallback(question: str, chat_history: List[Dict[str, str]]) -> str:
     """
-    第13天版本：规则优先 + LLM 兜底
+    LLM失败 or 输出异常时的兜底策略
+    """
+    q = (question or "").strip()
 
-    分类结果：
-    - chat
-    - kb_qa
-    - followup
+    if _is_chat(q):
+        return "chat"
+
+    # 简单 followup 判断
+    if chat_history and any(token in q for token in ["那", "它", "这个", "那个"]):
+        if len(q) <= 12:
+            return "followup"
+
+    return "kb_qa"
+
+
+def _light_post_fix(label: str, question: str, chat_history: List[Dict[str, str]]) -> str:
     """
+    LLM结果轻量修正（不是强规则，只是防明显错误）
+    """
+    q = (question or "").strip()
+
+    # 明显短追问，强行拉回 followup
+    if chat_history and len(q) <= 10 and any(token in q for token in ["那", "它", "这个"]):
+        return "followup"
+
+    return label
+
+
+def classify_node(state: AgentState) -> AgentState:
     debug_info: Dict[str, Any] = state.get("debug_info", {})
     question = (state.get("question") or "").strip()
     chat_history = state.get("chat_history", [])
 
+    # ===== 1. 极少量强规则 =====
     if not question:
         state["route"] = "chat"
-        debug_info["classify_status"] = "empty_question_default_chat"
+        debug_info["classify_status"] = "empty_question"
         state["debug_info"] = debug_info
         return state
 
-    # 1) 强规则：明显闲聊
     if _is_chat(question):
         state["route"] = "chat"
         debug_info["classify_status"] = "rule_chat"
         state["debug_info"] = debug_info
         return state
 
-    # 2) 强规则：明显 followup
-    if chat_history and _is_followup(question):
-        state["route"] = "followup"
-        debug_info["classify_status"] = "rule_followup"
-        state["debug_info"] = debug_info
-        return state
-
-    # 3) 规则无法确定时，交给 LLM
+    # ===== 2. LLM 主分类 =====
     history_text = _get_recent_history_text(chat_history)
 
     user_prompt = (
         f"对话历史：\n{history_text or '（无）'}\n\n"
-        f"当前用户问题：{question}\n\n"
-        f"请输出分类标签："
+        f"当前问题：{question}\n\n"
+        f"请判断分类标签："
     )
 
     messages = [
-        {
-            "role": "system",
-            "content": CLASSIFY_SYSTEM_PROMPT,
-        },
-        {
-            "role": "user",
-            "content": user_prompt,
-        },
+        {"role": "system", "content": CLASSIFY_SYSTEM_PROMPT},
+        {"role": "user", "content": user_prompt},
     ]
 
     try:
         llm_output = generate_answer(messages, temperature=0.0)
         label = _clean_label(llm_output)
 
+        # ===== 3. 轻量修正（关键）=====
+        label = _light_post_fix(label, question, chat_history)
+
         state["route"] = label
-        debug_info["classify_status"] = "llm_classified"
+        debug_info["classify_status"] = "llm_main"
         debug_info["classify_raw_output"] = llm_output
         state["debug_info"] = debug_info
         return state
 
     except Exception as e:
-        # 4) LLM 失败时，保守回退到 kb_qa
-        state["route"] = "kb_qa"
-        debug_info["classify_status"] = "llm_failed_default_kb_qa"
+        # ===== 4. 规则兜底 =====
+        label = _rule_fallback(question, chat_history)
+
+        state["route"] = label
+        debug_info["classify_status"] = "llm_failed_fallback"
         debug_info["classify_error"] = str(e)
         state["debug_info"] = debug_info
         return state

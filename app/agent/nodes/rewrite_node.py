@@ -5,10 +5,27 @@ from app.agent.prompts import REWRITE_SYSTEM_PROMPT
 from app.services.llm_service import generate_answer
 
 
+SELF_CONTAINED_QUERY_HINTS = [
+    "深度学习",
+    "机器学习",
+    "RAG",
+    "rag",
+    "缓存",
+    "BM25",
+    "bm25",
+    "rerank",
+    "embedding",
+    "向量数据库",
+    "redis",
+    "Redis",
+    "langgraph",
+    "langchain",
+    "项目",
+    "知识库",
+]
+
+
 def _get_last_user_message(chat_history: List[Dict[str, str]]) -> Optional[str]:
-    """
-    从 chat_history 中提取最近一条 user 消息
-    """
     if not chat_history:
         return None
 
@@ -20,16 +37,9 @@ def _get_last_user_message(chat_history: List[Dict[str, str]]) -> Optional[str]:
     return None
 
 
-def _select_rewrite_context(
-    chat_history: List[Dict[str, str]], max_messages: int = 4
-) -> List[Dict[str, str]]:
+def _select_rewrite_context(chat_history: List[Dict[str, str]], max_messages: int = 4) -> List[Dict[str, str]]:
     """
     为 rewrite 选择更有价值的上下文，而不是直接无脑取最近几条。
-
-    当前轻量策略：
-    1. 从后往前找，优先保留最近有内容的消息
-    2. 跳过空 role / 空 content
-    3. 最多保留 max_messages 条
     """
     if not chat_history:
         return []
@@ -52,14 +62,16 @@ def _select_rewrite_context(
         if len(selected_reversed) >= max_messages:
             break
 
-    selected = list(reversed(selected_reversed))
-    return selected
+    return list(reversed(selected_reversed))
 
 
 def _get_recent_history_text(chat_history: List[Dict[str, str]], max_turns: int = 4) -> str:
     """
     将筛选后的历史拼成文本，供 LLM 改写使用
     """
+    if not chat_history:
+        return ""
+
     selected_history = _select_rewrite_context(chat_history, max_messages=max_turns)
     if not selected_history:
         return ""
@@ -83,9 +95,6 @@ def _get_recent_history_text(chat_history: List[Dict[str, str]], max_turns: int 
 
 
 def _fallback_rule_rewrite(question: str, chat_history: List[Dict[str, str]]) -> str:
-    """
-    当 LLM 改写失败时，回退到规则版改写
-    """
     last_user_question = _get_last_user_message(chat_history)
     if not last_user_question:
         return question
@@ -93,9 +102,6 @@ def _fallback_rule_rewrite(question: str, chat_history: List[Dict[str, str]]) ->
 
 
 def _clean_rewritten_question(text: str, original_question: str) -> str:
-    """
-    清洗 LLM 改写结果
-    """
     cleaned = (text or "").strip()
 
     if not cleaned:
@@ -111,20 +117,12 @@ def _clean_rewritten_question(text: str, original_question: str) -> str:
 
 
 def rewrite_node(state: AgentState) -> AgentState:
-    """
-    第14天版本：优化 history 选择后的 LLM rewrite 节点
-
-    逻辑：
-    1. 非 followup -> 不改写
-    2. followup -> 先筛选最关键的历史上下文
-    3. 用精简后的 history + 当前问题 调 LLM 改写
-    4. 如果 LLM 失败 -> 回退到规则版 rewrite
-    """
     debug_info: Dict[str, Any] = state.get("debug_info", {})
     route = state.get("route", "kb_qa")
     question = (state.get("question") or "").strip()
     chat_history: List[Dict[str, str]] = state.get("chat_history", [])
 
+    # ===== 1. 非 followup，直接跳过 =====
     if route != "followup":
         state["rewritten_question"] = question
         debug_info["rewrite_status"] = "skipped_not_followup"
@@ -143,6 +141,7 @@ def rewrite_node(state: AgentState) -> AgentState:
         state["debug_info"] = debug_info
         return state
 
+    # ===== 2. 构造上下文 =====
     selected_history = _select_rewrite_context(chat_history, max_messages=4)
     history_text = _get_recent_history_text(selected_history, max_turns=4)
 
@@ -156,7 +155,7 @@ def rewrite_node(state: AgentState) -> AgentState:
             "content": (
                 f"对话历史如下：\n{history_text}\n\n"
                 f"当前用户问题：{question}\n\n"
-                f"请输出改写后的独立问题："
+                f"请判断该问题是否需要改写，并输出最终用于检索的问题："
             ),
         },
     ]
@@ -165,23 +164,28 @@ def rewrite_node(state: AgentState) -> AgentState:
         rewritten = generate_answer(messages, temperature=0.0)
         rewritten = _clean_rewritten_question(rewritten, question)
 
+        # ===== 3. 判断是否真的发生改写 =====
+        if rewritten == question:
+            debug_info["rewrite_status"] = "llm_keep_original"
+        else:
+            debug_info["rewrite_status"] = "llm_rewritten"
+
         state["rewritten_question"] = rewritten
-        debug_info["rewrite_status"] = "llm_rewritten"
         debug_info["original_question"] = question
         debug_info["rewritten_question"] = rewritten
         debug_info["rewrite_context_count"] = len(selected_history)
         debug_info["rewrite_context_preview"] = history_text[:200]
+
         state["debug_info"] = debug_info
         return state
 
     except Exception as e:
+        # ===== 4. 规则兜底 =====
         fallback = _fallback_rule_rewrite(question, chat_history)
+
         state["rewritten_question"] = fallback
         debug_info["rewrite_status"] = "llm_failed_rule_fallback"
         debug_info["rewrite_error"] = str(e)
-        debug_info["original_question"] = question
-        debug_info["rewritten_question"] = fallback
-        debug_info["rewrite_context_count"] = len(selected_history)
-        debug_info["rewrite_context_preview"] = history_text[:200]
+
         state["debug_info"] = debug_info
         return state
