@@ -5,7 +5,7 @@ def main():
     url = "http://127.0.0.1:8000/chat/agent"
 
     # 替换成你自己的 token
-    token = "YOUR_ACCESS_TOKEN"
+    token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhbGljZSIsImV4cCI6MTc3NjM4ODg2MH0.LGyoq9QSUczio3V98BL_cRCH8tWF9b4fNLyLDre4O2Y"
 
     headers = {
         "Authorization": f"Bearer {token}",
