@@ -1,22 +1,142 @@
 [
-    {
-      "question": "什么是深度学习?",
-      "expected_keyword": "神经网络"
-    },
-    {
-      "question": "How to reset password?",
-      "expected_keyword": "password reset"
-    },
-    {
-      "question": "How to upload a document?",
-      "expected_keyword": "documents/upload"
-    },
-    {
-      "question": "How to check document indexing status?",
-      "expected_keyword": "status"
-    },
-    {
-      "question": "What is hybrid search?",
-      "expected_keyword": "vector"
-    }
-  ]
+  {
+    "id": 1,
+    "question": "什么是深度学习？",
+    "gold_answer": "深度学习是机器学习的重要分支，通常通过多层神经网络自动学习特征表示。",
+    "gold_chunks": [{"document_id": 7, "keywords": ["深度学习", "机器学习", "神经网络"]}],
+    "type": "in_scope"
+  },
+  {
+    "id": 2,
+    "question": "深度学习的核心思想是什么？",
+    "gold_answer": "深度学习的核心思想是通过多层神经网络对数据进行层次化表示学习。",
+    "gold_chunks": [{"document_id": 7, "keywords": ["核心思想", "多层", "表示学习"]}],
+    "type": "in_scope"
+  },
+  {
+    "id": 3,
+    "question": "RAG为什么需要检索？",
+    "gold_answer": "检索用于从外部知识库中找回与问题相关的上下文，减少模型幻觉并补充外部知识。",
+    "gold_chunks": [{"document_id": 7, "keywords": ["检索", "上下文", "外部知识", "幻觉"]}],
+    "type": "in_scope"
+  },
+  {
+    "id": 4,
+    "question": "RAG为什么要做chunk切分？",
+    "gold_answer": "因为长文档不适合直接整体检索或送入模型，chunk 切分可以控制长度并提升检索粒度。",
+    "gold_chunks": [{"document_id": 7, "keywords": ["chunk", "切分", "长度", "检索粒度"]}],
+    "type": "in_scope"
+  },
+  {
+    "id": 5,
+    "question": "chunk overlap 的作用是什么？",
+    "gold_answer": "overlap 可以减少切分带来的语义断裂，让跨 chunk 的内容更容易被完整保留。",
+    "gold_chunks": [{"document_id": 7, "keywords": ["overlap", "语义断裂"]}],
+    "type": "in_scope"
+  },
+  {
+    "id": 6,
+    "question": "embedding 为什么要同源？",
+    "gold_answer": "query 和 document 必须使用同一 embedding 模型，才能位于同一个向量空间并正确比较相似度。",
+    "gold_chunks": [{"document_id": 7, "keywords": ["embedding", "同源", "向量空间"]}],
+    "type": "in_scope"
+  },
+  {
+    "id": 7,
+    "question": "向量检索的基本原理是什么？",
+    "gold_answer": "向量检索先把问题和文档表示成向量，再根据向量相似度找回最相关内容。",
+    "gold_chunks": [{"document_id": 7, "keywords": ["向量检索", "向量", "相似度"]}],
+    "type": "in_scope"
+  },
+  {
+    "id": 8,
+    "question": "BM25在RAG中起什么作用？",
+    "gold_answer": "BM25 提供关键词匹配能力，能补充纯向量检索在精确词项匹配上的不足。",
+    "gold_chunks": [{"document_id": 7, "keywords": ["BM25", "关键词", "混合检索"]}],
+    "type": "in_scope"
+  },
+  {
+    "id": 9,
+    "question": "为什么要做混合检索？",
+    "gold_answer": "因为向量检索擅长语义相似，BM25 擅长关键词匹配，混合检索能兼顾两者。",
+    "gold_chunks": [{"document_id": 7, "keywords": ["混合检索", "向量检索", "BM25"]}],
+    "type": "in_scope"
+  },
+  {
+    "id": 10,
+    "question": "rerank 的作用是什么？",
+    "gold_answer": "rerank 用于对初步召回结果重新排序，从而提升最终送入模型的上下文质量。",
+    "gold_chunks": [{"document_id": 7, "keywords": ["rerank", "重新排序", "上下文质量"]}],
+    "type": "in_scope"
+  },
+  {
+    "id": 11,
+    "question": "Cross-Encoder rerank 为什么能提升效果？",
+    "gold_answer": "因为它能同时建模 query 和 chunk 的交互关系，比单独编码后比较相似度更精细。",
+    "gold_chunks": [{"document_id": 7, "keywords": ["Cross-Encoder", "query", "交互"]}],
+    "type": "in_scope"
+  },
+  {
+    "id": 12,
+    "question": "RAG项目里为什么要加缓存？",
+    "gold_answer": "缓存可以减少重复检索和重复调用LLM，降低延迟和成本。",
+    "gold_chunks": [{"document_id": 7, "keywords": ["缓存", "重复检索", "成本", "延迟"]}],
+    "type": "in_scope"
+  },
+  {
+    "id": 13,
+    "question": "精确缓存和语义缓存有什么区别？",
+    "gold_answer": "精确缓存要求问题完全一致，语义缓存则允许相似问题复用已有答案。",
+    "gold_chunks": [{"document_id": 7, "keywords": ["精确缓存", "语义缓存", "相似问题"]}],
+    "type": "in_scope"
+  },
+  {
+    "id": 14,
+    "question": "为什么需要 fallback / refuse 机制？",
+    "gold_answer": "因为当证据不足时强行回答容易产生幻觉，所以需要在低置信度场景下拒答。",
+    "gold_chunks": [{"document_id": 7, "keywords": ["fallback", "证据不足", "幻觉"]}],
+    "type": "in_scope"
+  },
+  {
+    "id": 15,
+    "question": "Agentic RAG 比固定流程 RAG 多了什么能力？",
+    "gold_answer": "Agentic RAG 增加了决策层，能做分类、路由、改写、fallback 等动态决策。",
+    "gold_chunks": [{"document_id": 7, "keywords": ["Agentic RAG", "决策", "路由"]}],
+    "type": "in_scope"
+  },
+  {
+    "id": 16,
+    "question": "为什么要做 classify 节点？",
+    "gold_answer": "因为不是所有问题都应该走同一条知识库链路，classify 可以先分流 chat、kb_qa 和 followup。",
+    "gold_chunks": [{"document_id": 7, "keywords": ["classify", "分流", "chat", "followup"]}],
+    "type": "in_scope"
+  },
+  {
+    "id": 17,
+    "question": "followup rewrite 的作用是什么？",
+    "gold_answer": "它能把依赖上下文的追问改写成完整 query，从而提升检索效果。",
+    "gold_chunks": [{"document_id": 7, "keywords": ["followup", "rewrite", "完整query"]}],
+    "type": "in_scope"
+  },
+  {
+    "id": 18,
+    "question": "为什么 rewrite 前要先筛选历史上下文？",
+    "gold_answer": "因为历史太长会带来噪声，只保留关键上下文能提高改写稳定性。",
+    "gold_chunks": [{"document_id": 7, "keywords": ["筛选历史", "噪声", "改写稳定性"]}],
+    "type": "in_scope"
+  },
+  {
+    "id": 19,
+    "question": "session memory 的作用是什么？",
+    "gold_answer": "session memory 可以让系统按会话保存最近历史，从而支持多轮对话。",
+    "gold_chunks": [{"document_id": 7, "keywords": ["session memory", "多轮对话", "历史"]}],
+    "type": "in_scope"
+  },
+  {
+    "id": 20,
+    "question": "为什么要统一 debug_info 和日志摘要？",
+    "gold_answer": "因为节点变多后调试信息会变散，统一摘要能提升可观测性和排查效率。",
+    "gold_chunks": [{"document_id": 7, "keywords": ["debug_info", "日志摘要", "可观测性"]}],
+    "type": "in_scope"
+  }
+]
