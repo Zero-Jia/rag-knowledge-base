@@ -3,6 +3,7 @@ import time
 from typing import Any, Dict, Optional, List
 
 from app.agent.graph import agent_graph
+from app.agent.debug import build_agent_debug_summary, summarize_agent_result_for_log
 from app.exceptions import AppError
 from app.services.request_context import get_request_id
 from app.services.agent_memory_service import (
@@ -27,10 +28,9 @@ def agent_chat(
     """
     Agent 版本聊天主入口（非流式）
 
-    第12天增强：
-    - 若传入 chat_history，则覆盖当前 session 的历史并使用它
-    - 若未传入 chat_history，则自动从 session memory 读取历史
-    - 回答完成后，自动保存当前轮对话
+    第17天增强：
+    - 统一整理 debug_info
+    - 增加 agent 总结日志
     """
     rid = get_request_id()
     start = time.time()
@@ -45,7 +45,6 @@ def agent_chat(
 
     final_session_id = session_id or f"agent-session-{user_id or 'anonymous'}"
 
-    # 1) 优先使用请求里显式传入的 chat_history
     if chat_history:
         normalized_history = []
         for msg in chat_history:
@@ -60,12 +59,10 @@ def agent_chat(
                 }
             )
 
-        # 用请求中的历史覆盖当前 session 的历史
         overwrite_session_history(final_session_id, normalized_history)
         effective_history = normalized_history
         history_source = "request"
     else:
-        # 2) 如果请求没传，就从 session memory 自动读取
         effective_history = get_session_history(final_session_id)
         history_source = "memory"
 
@@ -97,7 +94,6 @@ def agent_chat(
 
         final_answer = result.get("final_answer") or ""
 
-        # 3) 自动保存本轮对话
         if final_answer:
             save_turn(
                 session_id=final_session_id,
@@ -106,6 +102,8 @@ def agent_chat(
             )
 
         latest_history = get_session_history(final_session_id)
+
+        debug_summary = build_agent_debug_summary(result)
 
         payload = {
             "question": q,
@@ -121,18 +119,19 @@ def agent_chat(
             "cache_hit": result.get("cache_hit", False),
             "need_fallback": result.get("need_fallback", False),
             "fallback_reason": result.get("fallback_reason"),
-            "debug_info": result.get("debug_info", {}),
+            "debug_info": debug_summary,   # 第17天：返回整理后的版本
         }
 
         elapsed = time.time() - start
+        summary_text = summarize_agent_result_for_log(result)
+
         logger.info(
-            "agent_chat done | rid=%s | user=%s | route=%s | cache_hit=%s | fallback=%s | updated_history_count=%s | time=%.3fs",
+            "agent_chat done | rid=%s | user=%s | session_id=%s | %s | updated_history_count=%s | time=%.3fs",
             rid,
             user_id,
-            payload.get("route"),
-            payload.get("cache_hit"),
-            payload.get("need_fallback"),
-            payload.get("updated_history_count"),
+            final_session_id,
+            summary_text,
+            len(latest_history),
             elapsed,
         )
 
