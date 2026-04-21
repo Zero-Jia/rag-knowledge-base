@@ -1,108 +1,129 @@
-import { useEffect, useState } from "react";
-import { listDocuments, deleteDocument } from "../api/documents";
+import { useEffect, useMemo, useState } from "react";
+import { deleteDocument, listDocuments } from "../api/documents";
+
+function normalizeStatus(status) {
+  const raw = String(status || "unknown").toLowerCase();
+  if (raw === "completed" || raw === "success") return "done";
+  if (raw === "running" || raw === "in_progress") return "processing";
+  return raw;
+}
 
 function StatusBadge({ status }) {
-  const styles = {
-    DONE: "bg-green-100 text-green-700",
-    PROCESSING: "bg-yellow-100 text-yellow-700",
-    FAILED: "bg-red-100 text-red-700",
-  };
-
-  return (
-    <span
-      className={`px-3 py-1 text-xs rounded-full font-medium ${
-        styles[status] || "bg-gray-100"
-      }`}
-    >
-      {status}
-    </span>
-  );
+  const normalized = normalizeStatus(status);
+  return <span className={`doc-status ${normalized}`}>{normalized}</span>;
 }
 
 export default function Documents() {
   const [docs, setDocs] = useState([]);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  const stats = useMemo(() => {
+    return docs.reduce(
+      (acc, doc) => {
+        const status = normalizeStatus(doc.status);
+        acc.total += 1;
+        acc[status] = (acc[status] || 0) + 1;
+        return acc;
+      },
+      { total: 0, done: 0, processing: 0, failed: 0 }
+    );
+  }, [docs]);
+
   async function loadDocs() {
+    setLoading(true);
+    setError("");
     try {
-      setLoading(true);
-      setError(null);
       const data = await listDocuments();
-      const items = Array.isArray(data) ? data : data.items;
-      setDocs(items || []);
-    } catch (e) {
-      setError(e.message);
+      const items = Array.isArray(data) ? data : data?.items || [];
+      setDocs(items);
+    } catch (err) {
+      setError(err?.message || "Failed to load documents");
     } finally {
       setLoading(false);
     }
   }
 
   async function handleDelete(documentId) {
-    if (!confirm("Delete this document?")) return;
-
+    if (!window.confirm("Delete this document?")) return;
     try {
       await deleteDocument(documentId);
       await loadDocs();
-    } catch (e) {
-      alert(e.message);
+    } catch (err) {
+      setError(err?.message || "Delete failed");
     }
   }
 
   useEffect(() => {
     loadDocs();
-    const timer = setInterval(loadDocs, 3000);
+    const timer = setInterval(loadDocs, 4000);
     return () => clearInterval(timer);
   }, []);
 
   return (
-    <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <h2 className="text-lg font-semibold">Documents</h2>
-        <button
-          onClick={loadDocs}
-          className="px-4 py-2 rounded-lg border border-gray-300 hover:bg-gray-100"
-        >
-          {loading ? "Loading..." : "Refresh"}
-        </button>
-      </div>
-
-      {error && <p className="text-red-600">Error: {error}</p>}
-      {docs.length === 0 && <p className="text-gray-500">No documents</p>}
-
-      <div className="space-y-3">
-        {docs.map((doc) => (
-          <div
-            key={doc.document_id}
-            className="border rounded-lg p-4 flex justify-between items-center"
-          >
-            <div>
-              <p className="font-medium">{doc.filename}</p>
-
-              {/* ✅ 展示用序号（连续） */}
-              <p className="text-sm text-gray-500">
-                No: {doc.display_id ?? "-"}
-              </p>
-
-              {/* ✅ 可选：保留真实 ID，方便你调试（不想显示就删掉这一行） */}
-              <p className="text-xs text-gray-400">
-                ID: {doc.document_id}
-              </p>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <StatusBadge status={doc.status} />
-
-              <button
-                onClick={() => handleDelete(doc.document_id)}
-                className="px-3 py-1 text-sm text-red-600 border border-red-200 rounded hover:bg-red-50"
-              >
-                Delete
-              </button>
-            </div>
+    <div className="page-grid">
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <h2 className="panel-title">Indexed documents</h2>
+            <p className="panel-subtitle">
+              Parent chunks and L3 vector chunks are managed by the backend.
+            </p>
           </div>
-        ))}
-      </div>
+          <button
+            type="button"
+            onClick={loadDocs}
+            className="ghost-button"
+            disabled={loading}
+          >
+            <span className="button-icon">R</span>
+            {loading ? "Refreshing" : "Refresh"}
+          </button>
+        </div>
+
+        <div className="document-stats">
+          <span className="metric-chip">Total {stats.total}</span>
+          <span className="metric-chip">Done {stats.done}</span>
+          <span className="metric-chip">Processing {stats.processing}</span>
+          <span className="metric-chip">Failed {stats.failed}</span>
+        </div>
+
+        {error && <div className="alert error">{error}</div>}
+
+        <div className="document-list">
+          {docs.map((doc) => (
+            <article key={doc.document_id} className="item-card document-row">
+              <div className="document-main">
+                <div className="doc-file-mark">
+                  {(doc.filename || "D").slice(0, 1).toUpperCase()}
+                </div>
+                <div>
+                  <h3>{doc.filename || "Untitled document"}</h3>
+                  <div className="doc-meta">
+                    <span>No. {doc.display_id ?? "-"}</span>
+                    <span className="mono">{doc.document_id}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="document-actions">
+                <StatusBadge status={doc.status} />
+                <button
+                  type="button"
+                  onClick={() => handleDelete(doc.document_id)}
+                  className="danger-button"
+                >
+                  Delete
+                </button>
+              </div>
+            </article>
+          ))}
+
+          {!loading && docs.length === 0 && (
+            <div className="empty-state">No documents have been indexed yet.</div>
+          )}
+        </div>
+      </section>
     </div>
   );
 }

@@ -1,22 +1,41 @@
 import json
+import os
+import warnings
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List
+
+warnings.filterwarnings("ignore", category=UserWarning, module="jieba")
 
 from app.agent.graph import agent_graph
 
 # 只在评测脚本里禁用缓存，不改原项目
+import app.agent.nodes.answer_node as answer_node
+import app.agent.nodes.cache_node as cache_node
 import app.agent.tools.cache_tool as cache_tool
 
 
-EVAL_FILE = Path("evaluation/questions.json")
+EVAL_FILE = Path(os.getenv("EVAL_FILE", "evaluation/questions.json"))
+EVAL_TOP_K = int(os.getenv("EVAL_TOP_K", "8"))
+EVAL_RERANK_TOP_N = int(os.getenv("EVAL_RERANK_TOP_N", "5"))
+EVAL_RERANK_SCORE_THRESHOLD = float(os.getenv("EVAL_RERANK_SCORE_THRESHOLD", "0.1"))
 
 
 def disable_cache_for_evaluation():
     """
     只在本次评测运行期间禁用缓存，不修改原项目代码。
+
+    注意：
+    cache_node.py 使用了 `from cache_tool import lookup_exact_cache` 这种导入方式，
+    所以只 patch cache_tool 不够，还必须 patch cache_node 中已绑定的函数名。
     """
     cache_tool.lookup_exact_cache = lambda **kwargs: None
     cache_tool.lookup_semantic_cache = lambda **kwargs: None
+    cache_tool.save_agent_cache = lambda **kwargs: None
+
+    cache_node.lookup_exact_cache = lambda **kwargs: None
+    cache_node.lookup_semantic_cache = lambda **kwargs: None
+
+    answer_node.save_agent_cache = lambda **kwargs: None
 
 
 def load_questions() -> List[Dict[str, Any]]:
@@ -72,8 +91,8 @@ def chunk_matches_gold(doc: Dict[str, Any], gold_chunks: List[Dict[str, Any]]) -
 def calc_precision_recall_at_k(
     retrieved_docs: List[Dict[str, Any]],
     gold_chunks: List[Dict[str, Any]],
-    k: int = 5,
-) -> Tuple[float, float]:
+    k: int = EVAL_TOP_K,
+) -> Dict[str, Any]:
     """
     Precision@K = topK中相关chunk数 / K
     Recall@K = topK中找回的相关chunk数 / gold相关chunk总数
@@ -81,12 +100,23 @@ def calc_precision_recall_at_k(
     topk_docs = retrieved_docs[:k]
 
     if not gold_chunks:
-        return 0.0, 0.0
+        return {
+            "precision": 0.0,
+            "recall": 0.0,
+            "hit": 0.0,
+            "mrr": 0.0,
+            "matched_gold_count": 0,
+            "gold_count": 0,
+            "missed_gold_keywords": [],
+            "matched_gold_keywords": [],
+            "first_hit_rank": None,
+        }
 
     hit_count = 0
     matched_gold_indices = set()
+    first_hit_rank = None
 
-    for doc in topk_docs:
+    for rank, doc in enumerate(topk_docs, start=1):
         for idx, gold in enumerate(gold_chunks):
             if idx in matched_gold_indices:
                 continue
@@ -94,11 +124,34 @@ def calc_precision_recall_at_k(
             if chunk_matches_gold(doc, [gold]):
                 hit_count += 1
                 matched_gold_indices.add(idx)
+                if first_hit_rank is None:
+                    first_hit_rank = rank
                 break
 
     precision = hit_count / k if k > 0 else 0.0
     recall = hit_count / len(gold_chunks) if gold_chunks else 0.0
-    return precision, recall
+    missed_gold_keywords = [
+        gold.get("keywords", [])
+        for idx, gold in enumerate(gold_chunks)
+        if idx not in matched_gold_indices
+    ]
+    matched_gold_keywords = [
+        gold.get("keywords", [])
+        for idx, gold in enumerate(gold_chunks)
+        if idx in matched_gold_indices
+    ]
+
+    return {
+        "precision": precision,
+        "recall": recall,
+        "hit": 1.0 if hit_count > 0 else 0.0,
+        "mrr": 1.0 / first_hit_rank if first_hit_rank else 0.0,
+        "matched_gold_count": hit_count,
+        "gold_count": len(gold_chunks),
+        "missed_gold_keywords": missed_gold_keywords,
+        "matched_gold_keywords": matched_gold_keywords,
+        "first_hit_rank": first_hit_rank,
+    }
 
 
 def simple_answer_match(answer: str, gold_answer: str) -> bool:
@@ -126,6 +179,29 @@ def simple_answer_match(answer: str, gold_answer: str) -> bool:
     return hit >= max(1, len(tokens) // 3)
 
 
+def answer_matches_gold_keywords(answer: str, gold_chunks: List[Dict[str, Any]]) -> bool:
+    """
+    用 gold keywords 辅助判断答案正确性，避免中文生成答案没有逐字复述 gold_answer 时被误判。
+    """
+    answer_lower = (answer or "").lower()
+    if not answer_lower or not gold_chunks:
+        return False
+
+    matched_gold_groups = 0
+    for gold in gold_chunks:
+        keywords = [kw for kw in gold.get("keywords", []) if kw]
+        if not keywords:
+            continue
+
+        matched_keywords = sum(1 for kw in keywords if kw.lower() in answer_lower)
+        required = min(2, len(keywords))
+        if matched_keywords >= required:
+            matched_gold_groups += 1
+
+    required_groups = max(1, len(gold_chunks) // 2)
+    return matched_gold_groups >= required_groups
+
+
 def evaluate_one_case(item: Dict[str, Any]) -> Dict[str, Any]:
     question = item["question"]
     gold_answer = item.get("gold_answer", "")
@@ -137,10 +213,10 @@ def evaluate_one_case(item: Dict[str, Any]) -> Dict[str, Any]:
         "chat_history": [],
         "debug_info": {
             "user_id": 1,
-            "top_k": 5,
-            "rerank_top_n": 3,
-            # 调高 fallback 阈值，避免乱答
-            "rerank_score_threshold": 6.0,
+            "top_k": EVAL_TOP_K,
+            "rerank_top_n": EVAL_RERANK_TOP_N,
+            # 评测阶段先降低阈值，避免 CrossEncoder 分数尺度导致误 fallback
+            "rerank_score_threshold": EVAL_RERANK_SCORE_THRESHOLD,
             "min_reranked_docs": 1,
         },
     }
@@ -148,23 +224,48 @@ def evaluate_one_case(item: Dict[str, Any]) -> Dict[str, Any]:
     result = agent_graph.invoke(state)
 
     retrieved_docs = result.get("retrieved_docs", [])
+    reranked_docs = result.get("reranked_docs", [])
     answer = result.get("final_answer") or ""
 
-    precision_at_5, recall_at_5 = calc_precision_recall_at_k(
+    retrieval_metrics = calc_precision_recall_at_k(
         retrieved_docs=retrieved_docs,
         gold_chunks=gold_chunks,
-        k=5,
+        k=EVAL_TOP_K,
+    )
+    rerank_metrics = calc_precision_recall_at_k(
+        retrieved_docs=reranked_docs,
+        gold_chunks=gold_chunks,
+        k=EVAL_RERANK_TOP_N,
     )
 
-    answer_correct = simple_answer_match(answer, gold_answer)
+    answer_correct = simple_answer_match(answer, gold_answer) or answer_matches_gold_keywords(answer, gold_chunks)
 
     return {
         "id": item["id"],
         "question": question,
         "route": result.get("route"),
-        "precision_at_5": precision_at_5,
-        "recall_at_5": recall_at_5,
+        "retrieval_precision_at_k": retrieval_metrics["precision"],
+        "retrieval_recall_at_k": retrieval_metrics["recall"],
+        "retrieval_hit_at_k": retrieval_metrics["hit"],
+        "retrieval_mrr": retrieval_metrics["mrr"],
+        "retrieval_first_hit_rank": retrieval_metrics["first_hit_rank"],
+        "rerank_precision_at_n": rerank_metrics["precision"],
+        "rerank_recall_at_n": rerank_metrics["recall"],
+        "rerank_hit_at_n": rerank_metrics["hit"],
+        "rerank_mrr": rerank_metrics["mrr"],
+        "rerank_first_hit_rank": rerank_metrics["first_hit_rank"],
+        "matched_gold_count": retrieval_metrics["matched_gold_count"],
+        "gold_count": retrieval_metrics["gold_count"],
+        "matched_gold_keywords": retrieval_metrics["matched_gold_keywords"],
+        "missed_gold_keywords": retrieval_metrics["missed_gold_keywords"],
+        "rerank_matched_gold_count": rerank_metrics["matched_gold_count"],
+        "rerank_missed_gold_keywords": rerank_metrics["missed_gold_keywords"],
         "answer_correct": answer_correct,
+        "retrieved_count": len(retrieved_docs),
+        "reranked_count": len(reranked_docs),
+        "retrieved_doc_ids": [doc.get("document_id") for doc in retrieved_docs],
+        "reranked_doc_ids": [doc.get("document_id") for doc in reranked_docs],
+        "answer_preview": answer[:120],
         "need_fallback": result.get("need_fallback", False),
         "fallback_reason": result.get("fallback_reason"),
         "debug_info": result.get("debug_info", {}),
@@ -179,6 +280,7 @@ def main():
 
     results = []
     for item in questions:
+        print(f"[eval] running id={item['id']} question={item['question']}")
         try:
             results.append(evaluate_one_case(item))
         except Exception as e:
@@ -193,11 +295,43 @@ def main():
     valid_results = [r for r in results if "error" not in r]
 
     avg_precision = (
-        sum(r["precision_at_5"] for r in valid_results) / len(valid_results)
+        sum(r["retrieval_precision_at_k"] for r in valid_results) / len(valid_results)
         if valid_results else 0.0
     )
     avg_recall = (
-        sum(r["recall_at_5"] for r in valid_results) / len(valid_results)
+        sum(r["retrieval_recall_at_k"] for r in valid_results) / len(valid_results)
+        if valid_results else 0.0
+    )
+    avg_hit = (
+        sum(r["retrieval_hit_at_k"] for r in valid_results) / len(valid_results)
+        if valid_results else 0.0
+    )
+    avg_mrr = (
+        sum(r["retrieval_mrr"] for r in valid_results) / len(valid_results)
+        if valid_results else 0.0
+    )
+    avg_matched_gold = (
+        sum(r["matched_gold_count"] for r in valid_results) / len(valid_results)
+        if valid_results else 0.0
+    )
+    avg_rerank_precision = (
+        sum(r["rerank_precision_at_n"] for r in valid_results) / len(valid_results)
+        if valid_results else 0.0
+    )
+    avg_rerank_recall = (
+        sum(r["rerank_recall_at_n"] for r in valid_results) / len(valid_results)
+        if valid_results else 0.0
+    )
+    avg_rerank_hit = (
+        sum(r["rerank_hit_at_n"] for r in valid_results) / len(valid_results)
+        if valid_results else 0.0
+    )
+    avg_rerank_mrr = (
+        sum(r["rerank_mrr"] for r in valid_results) / len(valid_results)
+        if valid_results else 0.0
+    )
+    avg_rerank_matched_gold = (
+        sum(r["rerank_matched_gold_count"] for r in valid_results) / len(valid_results)
         if valid_results else 0.0
     )
     avg_answer_correctness = (
@@ -206,13 +340,25 @@ def main():
     )
 
     summary = {
+        "eval_file": str(EVAL_FILE),
         "evaluated_cases": len(valid_results),
-        "avg_precision_at_5": avg_precision,
-        "avg_recall_at_5": avg_recall,
+        "top_k": EVAL_TOP_K,
+        "rerank_top_n": EVAL_RERANK_TOP_N,
+        "rerank_score_threshold": EVAL_RERANK_SCORE_THRESHOLD,
+        "avg_retrieval_precision_at_k": avg_precision,
+        "avg_retrieval_recall_at_k": avg_recall,
+        "avg_retrieval_hit_at_k": avg_hit,
+        "avg_retrieval_mrr": avg_mrr,
+        "avg_retrieval_matched_gold_count": avg_matched_gold,
+        "avg_rerank_precision_at_n": avg_rerank_precision,
+        "avg_rerank_recall_at_n": avg_rerank_recall,
+        "avg_rerank_hit_at_n": avg_rerank_hit,
+        "avg_rerank_mrr": avg_rerank_mrr,
+        "avg_rerank_matched_gold_count": avg_rerank_matched_gold,
         "avg_answer_correctness": avg_answer_correctness,
     }
 
-    print("\n===== EVALUATION SUMMARY (FIRST 20 IN-SCOPE QUESTIONS) =====")
+    print(f"\n===== EVALUATION SUMMARY ({EVAL_FILE}) =====")
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 
     print("\n===== PER-CASE RESULTS =====")

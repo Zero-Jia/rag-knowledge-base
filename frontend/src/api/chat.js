@@ -1,37 +1,39 @@
-// frontend/src/api/chat.js
-
-// ✅ 统一用 Vite 环境变量（docker compose 会注入）
-// 本地开发没配时，默认回退到 127.0.0.1
-const API_BASE =
-  import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ||
-  "http://127.0.0.1:8000";
-
-function getToken() {
-  // ✅ 先 sessionStorage，再兼容旧 localStorage（防止历史残留）
-  return (
-    sessionStorage.getItem("access_token") ||
-    localStorage.getItem("access_token")
-  );
-}
+import { API_BASE, apiFetch, clearToken, getToken } from "./client";
 
 export async function streamChat(question) {
+  return streamAgentChat({ question });
+}
+
+export async function streamAgentChat({
+  question,
+  sessionId = null,
+  chatHistory = [],
+  topK = 5,
+  rerankTopN = 3,
+  rerankScoreThreshold = 0.1,
+  signal,
+}) {
   const token = getToken();
 
-  const resp = await fetch(`${API_BASE}/chat/stream`, {
+  const resp = await fetch(`${API_BASE}/chat/agent/stream`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({
+      question,
+      session_id: sessionId,
+      chat_history: chatHistory,
+      top_k: topK,
+      rerank_top_n: rerankTopN,
+      rerank_score_threshold: rerankScoreThreshold,
+    }),
+    signal,
   });
 
-  // ✅ 401/403 给出更明确的提示
   if (resp.status === 401 || resp.status === 403) {
-    // 可选：清理无效 token，避免一直失败
-    sessionStorage.removeItem("access_token");
-    localStorage.removeItem("access_token");
-
+    clearToken();
     const text = await resp.text().catch(() => "");
     throw new Error(text || "Unauthorized. Please login again.");
   }
@@ -42,6 +44,19 @@ export async function streamChat(question) {
   }
 
   if (!resp.body) throw new Error("No stream body");
-
   return resp.body.getReader();
+}
+
+export async function listAgentSessions() {
+  const data = await apiFetch("/chat/agent/sessions", { method: "GET" });
+  return Array.isArray(data) ? data : data?.items || [];
+}
+
+export async function getAgentSessionMessages(sessionId, includeTrace = true) {
+  const qs = new URLSearchParams({ include_trace: String(includeTrace) });
+  const data = await apiFetch(
+    `/chat/agent/sessions/${encodeURIComponent(sessionId)}/messages?${qs}`,
+    { method: "GET" }
+  );
+  return Array.isArray(data) ? data : data?.items || [];
 }

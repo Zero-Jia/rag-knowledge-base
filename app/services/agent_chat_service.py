@@ -11,6 +11,7 @@ from app.services.agent_memory_service import (
     overwrite_session_history,
     save_turn,
 )
+from app.schemas.rag_trace import create_rag_trace, record_timing, set_fallback_reason
 
 logger = logging.getLogger("rag.agent")
 
@@ -59,17 +60,21 @@ def agent_chat(
                 }
             )
 
-        overwrite_session_history(final_session_id, normalized_history)
+        overwrite_session_history(final_session_id, normalized_history, user_id=user_id)
         effective_history = normalized_history
         history_source = "request"
     else:
-        effective_history = get_session_history(final_session_id)
+        effective_history = get_session_history(final_session_id, user_id=user_id)
         history_source = "memory"
 
     state = {
         "question": q,
         "session_id": final_session_id,
         "chat_history": effective_history,
+        "rag_trace": create_rag_trace(
+            original_query=q,
+            retrieval_mode="agentic",
+        ),
         "debug_info": {
             "user_id": user_id,
             "top_k": top_k,
@@ -99,9 +104,11 @@ def agent_chat(
                 session_id=final_session_id,
                 user_question=q,
                 assistant_answer=final_answer,
+                user_id=user_id,
+                rag_trace=result.get("rag_trace"),
             )
 
-        latest_history = get_session_history(final_session_id)
+        latest_history = get_session_history(final_session_id, user_id=user_id)
 
         debug_summary = build_agent_debug_summary(result)
 
@@ -120,9 +127,12 @@ def agent_chat(
             "need_fallback": result.get("need_fallback", False),
             "fallback_reason": result.get("fallback_reason"),
             "debug_info": debug_summary,   # 第17天：返回整理后的版本
+            "rag_trace": result.get("rag_trace"),
         }
 
         elapsed = time.time() - start
+        if isinstance(payload.get("rag_trace"), dict):
+            record_timing(payload["rag_trace"], "agent_total_ms", elapsed * 1000.0)
         summary_text = summarize_agent_result_for_log(result)
 
         logger.info(
@@ -142,6 +152,10 @@ def agent_chat(
 
     except Exception as e:
         elapsed = time.time() - start
+        trace = state.get("rag_trace") if "state" in locals() else None
+        if isinstance(trace, dict):
+            set_fallback_reason(trace, str(e))
+            record_timing(trace, "agent_total_ms", elapsed * 1000.0)
         logger.error(
             "agent_chat fail | rid=%s | user=%s | time=%.3fs | error=%s",
             rid,

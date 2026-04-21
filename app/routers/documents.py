@@ -35,8 +35,17 @@ from app.services.document_parser import parse_document
 from app.services.indexing_service import index_document_pipeline
 from app.services.document_service import get_document_by_id, list_documents
 from app.services.document_delete_service import delete_document_full
+from app.services.document_job_service import (
+    create_document_job,
+    get_latest_document_job,
+    mark_stage_done,
+    mark_stage_failed,
+    mark_stage_processing,
+    serialize_document_job,
+)
 from app.database import get_db
 from app.models.document import Document, DocumentStatus
+from app.models.document_job import DocumentJobStage
 from app.security import get_current_user
 from app.schemas.common import APIResponse
 from app.exceptions import AppError
@@ -235,18 +244,59 @@ def upload_document(
     db.commit()
     db.refresh(doc)
 
+    job = create_document_job(
+        db,
+        document_id=doc.id,
+        user_id=current_user.id,
+        metadata={
+            "filename": file.filename,
+            "content_type": file.content_type or "application/octet-stream",
+        },
+    )
+    mark_stage_processing(
+        db,
+        job=job,
+        stage=DocumentJobStage.UPLOAD,
+        details={"filename": file.filename},
+    )
+    db.commit()
+    db.refresh(job)
+
     save_path = os.path.join(UPLOAD_ROOT, f"{doc.id}_{file.filename}")
 
     try:
         # ✅ Day26 Task4：保存时限制大小
         _written_size = save_upload_with_limit(file, save_path, MAX_FILE_SIZE)
+        mark_stage_done(
+            db,
+            job=job,
+            stage=DocumentJobStage.UPLOAD,
+            details={
+                "file_path": save_path,
+                "file_size": _written_size,
+            },
+        )
     except AppError:
         # 建议：保存失败/超限时标记 FAILED，避免前端一直看到 pending
         doc.status = DocumentStatus.FAILED
+        mark_stage_failed(
+            db,
+            job=job,
+            stage=DocumentJobStage.UPLOAD,
+            error_message="File upload failed",
+            error_code="UPLOAD_FAILED",
+        )
         db.commit()
         raise
     except Exception as e:
         doc.status = DocumentStatus.FAILED
+        mark_stage_failed(
+            db,
+            job=job,
+            stage=DocumentJobStage.UPLOAD,
+            error_message=str(e),
+            error_code="FILE_SAVE_FAILED",
+        )
         db.commit()
         raise AppError(code="FILE_SAVE_FAILED", message="Failed to save file", status_code=500, details=str(e))
 
@@ -260,6 +310,7 @@ def upload_document(
         success=True,
         data={
             "document_id": doc.id,
+            "job_id": job.id,
             "status": doc.status.value,
             "message": "uploaded, indexing started",
             # 可选：把文件大小返回给前端（调试方便）
@@ -287,10 +338,15 @@ def get_document_status(
     current_user=Depends(get_current_user),
 ):
     doc = get_document_by_id(db, document_id=document_id, user_id=current_user.id)
+    job = get_latest_document_job(db, document_id=document_id)
 
     return APIResponse(
         success=True,
-        data={"document_id": doc.id, "status": doc.status.value},
+        data={
+            "document_id": doc.id,
+            "status": doc.status.value,
+            "job": serialize_document_job(job),
+        },
         error=None,
         trace_id=getattr(request.state, "trace_id", None),
     )

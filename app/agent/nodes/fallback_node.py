@@ -1,6 +1,7 @@
 from typing import Any, Dict
 
 from app.agent.state import AgentState
+from app.schemas.rag_trace import set_fallback_reason
 
 
 def fallback_node(state: AgentState) -> AgentState:
@@ -8,6 +9,7 @@ def fallback_node(state: AgentState) -> AgentState:
     第16天版本：更细致的 fallback 文案
     """
     debug_info: Dict[str, Any] = state.get("debug_info", {})
+    rag_trace: Dict[str, Any] = state.get("rag_trace", {})
     reason = state.get("fallback_reason") or "unknown"
     route = state.get("route", "kb_qa")
 
@@ -16,6 +18,8 @@ def fallback_node(state: AgentState) -> AgentState:
         state["final_answer"] = "我可以继续和你聊天，你也可以问我知识库相关的问题。"
         debug_info["fallback_status"] = "used_unexpected_chat_fallback"
         debug_info["fallback_reason"] = reason
+        set_fallback_reason(rag_trace, reason)
+        state["rag_trace"] = rag_trace
         state["debug_info"] = debug_info
         return state
 
@@ -31,5 +35,7 @@ def fallback_node(state: AgentState) -> AgentState:
     state["final_answer"] = reason_to_message.get(reason, reason_to_message["unknown"])
     debug_info["fallback_status"] = "used"
     debug_info["fallback_reason"] = reason
+    set_fallback_reason(rag_trace, reason)
+    state["rag_trace"] = rag_trace
     state["debug_info"] = debug_info
     return state

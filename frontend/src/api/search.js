@@ -6,15 +6,12 @@ function getSearchPath(mode) {
   return "/search";
 }
 
-export async function search(query, mode = "semantic", topK = 5) {
+export async function search(query, mode = "vector", topK = 5) {
   const resp = await apiFetch(getSearchPath(mode), {
     method: "POST",
-    body: JSON.stringify({ query, top_k: topK }),
+    body: JSON.stringify({ query, top_k: Number(topK) || 5 }),
   });
 
-  console.log("apiFetch resp:", resp);
-
-  // ✅ 兼容：items / results + 是否被 apiFetch 解包
   const items =
     resp?.data?.items ??
     resp?.data?.results ??
@@ -22,10 +19,8 @@ export async function search(query, mode = "semantic", topK = 5) {
     resp?.results ??
     [];
 
-  console.log("final items:", items, "length:", items.length);
-
-  return (items || []).map((it) => ({
-    ...it,
-    score: typeof it.score === "string" ? Number(it.score) : it.score,
+  return (items || []).map((item) => ({
+    ...item,
+    score: typeof item.score === "string" ? Number(item.score) : item.score,
   }));
 }

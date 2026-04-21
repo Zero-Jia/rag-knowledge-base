@@ -1,84 +1,90 @@
-from typing import Dict, List, Optional
+from __future__ import annotations
 
-# 第12天先做内存版 session store
-# 后续如果要升级 Redis / DB，这里可以整体替换
-_SESSION_STORE: Dict[str, List[Dict[str, str]]] = {}
+from typing import Any, Dict, List, Optional
 
-# 为了避免单个 session 无限增长，先做一个简单上限
-MAX_HISTORY_MESSAGES = 20
+from app.services.chat_session_service import (
+    MAX_HISTORY_MESSAGES,
+    append_session_message as _append_session_message,
+    clear_session_history as _clear_session_history,
+    get_session_history as _get_session_history,
+    get_session_messages,
+    list_chat_sessions,
+    overwrite_session_history as _overwrite_session_history,
+    save_turn as _save_turn,
+)
 
 
-def get_session_history(session_id: str) -> List[Dict[str, str]]:
+def get_session_history(
+    session_id: str,
+    *,
+    limit: int = MAX_HISTORY_MESSAGES,
+    user_id: Optional[int] = None,
+) -> List[Dict[str, str]]:
     """
-    获取某个 session 的历史消息
+    Persistent replacement for the old in-memory session history.
     """
-    if not session_id:
-        return []
-    return list(_SESSION_STORE.get(session_id, []))
+    return _get_session_history(session_id, limit=limit, user_id=user_id)
 
 
-def append_session_message(session_id: str, role: str, content: str) -> None:
-    """
-    向某个 session 追加一条消息
-    """
-    if not session_id:
-        return
-
-    role = (role or "").strip()
-    content = (content or "").strip()
-
-    if not role or not content:
-        return
-
-    messages = _SESSION_STORE.setdefault(session_id, [])
-    messages.append(
-        {
-            "role": role,
-            "content": content,
-        }
+def append_session_message(
+    session_id: str,
+    role: str,
+    content: str,
+    *,
+    user_id: Optional[int] = None,
+    rag_trace: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> None:
+    _append_session_message(
+        session_id,
+        role,
+        content,
+        user_id=user_id,
+        rag_trace=rag_trace,
+        metadata=metadata,
     )
 
-    # 限制最大长度，只保留最近若干条
-    if len(messages) > MAX_HISTORY_MESSAGES:
-        _SESSION_STORE[session_id] = messages[-MAX_HISTORY_MESSAGES:]
 
-
-def save_turn(session_id: str, user_question: str, assistant_answer: str) -> None:
+def save_turn(
+    session_id: str,
+    user_question: str,
+    assistant_answer: str,
+    *,
+    user_id: Optional[int] = None,
+    rag_trace: Optional[Dict[str, Any]] = None,
+) -> None:
     """
-    保存一轮对话（user + assistant）
+    Save one user/assistant turn. rag_trace is stored on the assistant message.
     """
-    append_session_message(session_id, "user", user_question)
-    append_session_message(session_id, "assistant", assistant_answer)
+    _save_turn(
+        session_id,
+        user_question,
+        assistant_answer,
+        user_id=user_id,
+        rag_trace=rag_trace,
+    )
 
 
-def overwrite_session_history(session_id: str, chat_history: Optional[List[Dict[str, str]]]) -> None:
-    """
-    用外部传入的 chat_history 覆盖当前 session 的历史。
-    适合接口层显式传入 history 的场景。
-    """
-    if not session_id:
-        return
-
-    normalized: List[Dict[str, str]] = []
-    for msg in chat_history or []:
-        role = (msg.get("role") or "").strip()
-        content = (msg.get("content") or "").strip()
-        if not role or not content:
-            continue
-        normalized.append(
-            {
-                "role": role,
-                "content": content,
-            }
-        )
-
-    _SESSION_STORE[session_id] = normalized[-MAX_HISTORY_MESSAGES:]
+def overwrite_session_history(
+    session_id: str,
+    chat_history: Optional[List[Dict[str, str]]],
+    *,
+    user_id: Optional[int] = None,
+) -> None:
+    _overwrite_session_history(session_id, chat_history, user_id=user_id)
 
 
-def clear_session_history(session_id: str) -> None:
-    """
-    清空某个 session 的历史
-    """
-    if not session_id:
-        return
-    _SESSION_STORE.pop(session_id, None)
+def clear_session_history(session_id: str, *, user_id: Optional[int] = None) -> None:
+    _clear_session_history(session_id, user_id=user_id)
+
+
+__all__ = [
+    "MAX_HISTORY_MESSAGES",
+    "get_session_history",
+    "append_session_message",
+    "save_turn",
+    "overwrite_session_history",
+    "clear_session_history",
+    "list_chat_sessions",
+    "get_session_messages",
+]

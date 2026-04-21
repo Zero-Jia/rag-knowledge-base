@@ -2,6 +2,7 @@ from typing import Any, Dict, List
 
 from app.agent.state import AgentState
 from app.agent.tools.rerank_tool import rerank_tool
+from app.schemas.rag_trace import record_rerank_scores, set_fallback_reason
 
 
 def rerank_node(state: AgentState) -> AgentState:
@@ -15,6 +16,7 @@ def rerank_node(state: AgentState) -> AgentState:
     4. 综合 top1 score + reranked_docs 数量判断是否足够回答
     """
     debug_info: Dict[str, Any] = state.get("debug_info", {})
+    rag_trace: Dict[str, Any] = state.get("rag_trace", {})
     route = state.get("route", "kb_qa")
     question = (state.get("question") or "").strip()
     retrieved_docs: List[Dict[str, Any]] = state.get("retrieved_docs", [])
@@ -24,26 +26,35 @@ def rerank_node(state: AgentState) -> AgentState:
         debug_info["rerank_status"] = "skipped_for_chat"
         state["need_fallback"] = False
         state["fallback_reason"] = None
+        set_fallback_reason(rag_trace, None)
+        state["rag_trace"] = rag_trace
         state["debug_info"] = debug_info
         return state
 
     if state.get("cache_hit") is True:
         debug_info["rerank_status"] = "skipped_due_to_cache_hit"
         state["debug_info"] = debug_info
+        state["rag_trace"] = rag_trace
         return state
 
     if not question:
         state["reranked_docs"] = []
+        state["initial_reranked_docs"] = []
         state["need_fallback"] = True
         state["fallback_reason"] = "empty_question"
+        set_fallback_reason(rag_trace, "empty_question")
+        state["rag_trace"] = rag_trace
         debug_info["rerank_status"] = "empty_question"
         state["debug_info"] = debug_info
         return state
 
     if not retrieved_docs:
         state["reranked_docs"] = []
+        state["initial_reranked_docs"] = []
         state["need_fallback"] = True
         state["fallback_reason"] = "no_retrieved_docs"
+        set_fallback_reason(rag_trace, "no_retrieved_docs")
+        state["rag_trace"] = rag_trace
         debug_info["rerank_status"] = "no_retrieved_docs"
         debug_info["rerank_count"] = 0
         debug_info["evidence_status"] = "insufficient_no_retrieved_docs"
@@ -61,6 +72,8 @@ def rerank_node(state: AgentState) -> AgentState:
     )
 
     state["reranked_docs"] = docs
+    state["initial_reranked_docs"] = docs
+    record_rerank_scores(rag_trace, docs)
     debug_info["rerank_status"] = "success"
     debug_info["rerank_count"] = len(docs)
     debug_info["rerank_top_n"] = top_n
@@ -70,6 +83,8 @@ def rerank_node(state: AgentState) -> AgentState:
     if not docs:
         state["need_fallback"] = True
         state["fallback_reason"] = "empty_reranked_docs"
+        set_fallback_reason(rag_trace, "empty_reranked_docs")
+        state["rag_trace"] = rag_trace
         debug_info["evidence_status"] = "insufficient_empty_reranked_docs"
         state["debug_info"] = debug_info
         return state
@@ -91,6 +106,8 @@ def rerank_node(state: AgentState) -> AgentState:
     if top1_score is None or top1_score < score_threshold:
         state["need_fallback"] = True
         state["fallback_reason"] = "low_rerank_score"
+        set_fallback_reason(rag_trace, "low_rerank_score")
+        state["rag_trace"] = rag_trace
         debug_info["evidence_status"] = "insufficient_low_rerank_score"
         state["debug_info"] = debug_info
         return state
@@ -99,12 +116,16 @@ def rerank_node(state: AgentState) -> AgentState:
     if qualified_docs_count < min_reranked_docs:
         state["need_fallback"] = True
         state["fallback_reason"] = "insufficient_supporting_docs"
+        set_fallback_reason(rag_trace, "insufficient_supporting_docs")
+        state["rag_trace"] = rag_trace
         debug_info["evidence_status"] = "insufficient_supporting_docs"
         state["debug_info"] = debug_info
         return state
 
     state["need_fallback"] = False
     state["fallback_reason"] = None
+    set_fallback_reason(rag_trace, None)
+    state["rag_trace"] = rag_trace
     debug_info["evidence_status"] = "sufficient"
     state["debug_info"] = debug_info
     return state

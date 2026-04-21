@@ -3,6 +3,11 @@ from typing import Any, Dict, List
 from app.agent.state import AgentState
 from app.agent.tools.hybrid_tool import hybrid_search_tool
 from app.agent.tools.vector_tool import vector_search_tool
+from app.schemas.rag_trace import (
+    record_initial_chunks,
+    record_merged_chunks,
+    set_fallback_reason,
+)
 
 
 def retrieve_node(state: AgentState) -> AgentState:
@@ -16,6 +21,7 @@ def retrieve_node(state: AgentState) -> AgentState:
     4. 如果 hybrid 结果为空，再回退到 vector search
     """
     debug_info: Dict[str, Any] = state.get("debug_info", {})
+    rag_trace: Dict[str, Any] = state.get("rag_trace", {})
     question = (state.get("question") or "").strip()
     rewritten_question = (state.get("rewritten_question") or "").strip()
 
@@ -29,6 +35,8 @@ def retrieve_node(state: AgentState) -> AgentState:
     if not effective_query:
         state["retrieved_docs"] = []
         debug_info["retrieve_status"] = "empty_effective_query"
+        set_fallback_reason(rag_trace, "empty_effective_query")
+        state["rag_trace"] = rag_trace
         state["debug_info"] = debug_info
         return state
 
@@ -39,14 +47,18 @@ def retrieve_node(state: AgentState) -> AgentState:
         question=effective_query,
         top_k=top_k,
         user_id=user_id,
+        rag_trace=rag_trace,
     )
 
     if docs:
         state["retrieved_docs"] = docs
+        state["initial_query"] = effective_query
+        state["initial_retrieved_docs"] = docs
         debug_info["retrieve_status"] = "hybrid_success"
         debug_info["retrieve_count"] = len(docs)
         debug_info["retrieve_source"] = "hybrid"
         debug_info["effective_query"] = effective_query
+        state["rag_trace"] = rag_trace
         state["debug_info"] = debug_info
         return state
 
@@ -56,9 +68,14 @@ def retrieve_node(state: AgentState) -> AgentState:
     )
 
     state["retrieved_docs"] = docs
+    state["initial_query"] = effective_query
+    state["initial_retrieved_docs"] = docs
+    record_initial_chunks(rag_trace, docs)
+    record_merged_chunks(rag_trace, docs)
     debug_info["retrieve_status"] = "vector_fallback"
     debug_info["retrieve_count"] = len(docs)
     debug_info["retrieve_source"] = "vector"
     debug_info["effective_query"] = effective_query
+    state["rag_trace"] = rag_trace
     state["debug_info"] = debug_info
     return state

@@ -19,8 +19,23 @@ class AgentState(TypedDict, total=False):
 
     retrieved_docs: List[Dict[str, Any]]
     reranked_docs: List[Dict[str, Any]]
+    initial_query: str
+    initial_retrieved_docs: List[Dict[str, Any]]
+    initial_reranked_docs: List[Dict[str, Any]]
+    evidence_grade: str
+    grade_reason: Optional[str]
+    grade_metrics: Dict[str, Any]
+    need_query_expansion: bool
+    expanded_queries: List[str]
+    query_expansion_strategy: List[str]
+    expanded_retrieved_docs: List[Dict[str, Any]]
+    combined_retrieved_docs: List[Dict[str, Any]]
+    expanded_reranked_docs: List[Dict[str, Any]]
+    expansion_attempted: bool
+    retrieval_attempts: List[Dict[str, Any]]
 
     final_answer: Optional[str]
+    rag_trace: Dict[str, Any]
 
     need_retry: bool
 

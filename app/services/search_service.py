@@ -24,7 +24,7 @@ def search_chunks(db: Session, user_id: int, query: str, top_k: int) -> Dict[str
 
     # ✅ Day25：缓存 key（区分用户 + query + top_k + 检索模式）
     # 你这个函数是纯向量 retrieve_chunks，所以 mode 我标记为 vector
-    raw = f"user={user_id}|mode=vector|topk={top_k}|q={q}"
+    raw = f"v=vector_v2_hierarchical|user={user_id}|mode=vector|topk={top_k}|q={q}"
     cache_key = make_cache_key("search", raw)
 
     # ✅ 1) 查缓存

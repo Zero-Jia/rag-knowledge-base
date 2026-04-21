@@ -71,6 +71,24 @@ class VectorStore:
 
         return self.collection.query(**kwargs)
 
+    def get_texts(
+        self,
+        *,
+        where: Optional[Dict[str, Any]] = None,
+        limit: Optional[int] = None,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        kwargs: Dict[str, Any] = {
+            "include": ["documents", "metadatas"],
+        }
+        if where:
+            kwargs["where"] = where
+        if limit is not None:
+            kwargs["limit"] = limit
+            kwargs["offset"] = offset
+
+        return self.collection.get(**kwargs)
+
     def delete(self, *, ids: Optional[List[str]] = None, where: Optional[Dict[str, Any]] = None) -> None:
         kwargs: Dict[str, Any] = {}
         if ids:

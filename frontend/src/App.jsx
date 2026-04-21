@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import "./App.css";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Upload from "./pages/Upload";
@@ -6,12 +7,39 @@ import Documents from "./pages/Documents";
 import Search from "./pages/Search";
 import Chat from "./pages/Chat";
 
-export default function App() {
-  const [page, setPage] = useState("upload");
-  const [authPage, setAuthPage] = useState("login"); // ✅ 新增：登录/注册切换
+const pages = {
+  upload: {
+    label: "Upload",
+    icon: "U",
+    title: "Document Intake",
+    subtitle: "Parse files, store parent chunks, then push L3 chunks into vectors.",
+  },
+  docs: {
+    label: "Documents",
+    icon: "D",
+    title: "Knowledge Library",
+    subtitle: "Track indexed files, ingestion status, and cleanup operations.",
+  },
+  search: {
+    label: "Search",
+    icon: "S",
+    title: "Retrieval Lab",
+    subtitle: "Compare vector, hybrid, and rerank retrieval modes.",
+  },
+  chat: {
+    label: "Agent Chat",
+    icon: "A",
+    title: "Agentic RAG",
+    subtitle: "Stream answer steps, second retrieval, and structured rag_trace.",
+  },
+};
 
-  // ✅ 改为 sessionStorage
+export default function App() {
+  const [page, setPage] = useState("chat");
+  const [authPage, setAuthPage] = useState("login");
   const token = sessionStorage.getItem("access_token");
+
+  const activePage = useMemo(() => pages[page] || pages.chat, [page]);
 
   if (!token) {
     return authPage === "login" ? (
@@ -21,55 +49,75 @@ export default function App() {
     );
   }
 
-  const navBtn = (name, label) => (
-    <button
-      onClick={() => setPage(name)}
-      className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
-        page === name
-          ? "bg-black text-white"
-          : "border border-gray-300 hover:bg-gray-100"
-      }`}
-    >
-      {label}
-    </button>
-  );
-
   const logout = () => {
     sessionStorage.removeItem("access_token");
+    localStorage.removeItem("access_token");
     window.location.reload();
   };
 
   return (
-    <div className="min-h-screen bg-gray-100">
-      <header className="bg-white shadow-sm">
-        <div className="max-w-5xl mx-auto px-6 py-4 flex justify-between items-center">
-          <h1 className="text-xl font-semibold">RAG Knowledge Base</h1>
-
-          <div className="flex gap-3 items-center">
-            {navBtn("upload", "Upload")}
-            {navBtn("docs", "Documents")}
-            {navBtn("search", "Search")}
-            {navBtn("chat", "Chat")}
-
-            {/* ✅ 退出登录按钮 */}
-            <button
-              onClick={logout}
-              className="px-4 py-2 rounded-lg text-sm font-medium border border-gray-300 hover:bg-gray-100 transition"
-              title="Logout"
-            >
-              Logout
-            </button>
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="brand-block">
+          <div className="brand-mark">R</div>
+          <div>
+            <div className="brand-title">RAG Studio</div>
+            <div className="brand-subtitle">Knowledge Base</div>
           </div>
         </div>
-      </header>
 
-      <main className="max-w-5xl mx-auto p-6">
-        <div className="bg-white rounded-xl shadow-sm p-6">
+        <nav className="side-nav" aria-label="Main navigation">
+          {Object.entries(pages).map(([name, item]) => (
+            <button
+              key={name}
+              type="button"
+              onClick={() => setPage(name)}
+              className={`nav-item ${page === name ? "active" : ""}`}
+              title={item.label}
+            >
+              <span className="nav-icon">{item.icon}</span>
+              <span>{item.label}</span>
+            </button>
+          ))}
+        </nav>
+
+        <div className="sidebar-footer">
+          <div className="mini-status">
+            <span className="status-dot ok" />
+            Backend connected by token
+          </div>
+          <button
+            type="button"
+            onClick={logout}
+            className="ghost-button sidebar-logout"
+            title="Logout"
+          >
+            <span className="button-icon">X</span>
+            Logout
+          </button>
+        </div>
+      </aside>
+
+      <main className="workspace">
+        <header className="workspace-header">
+          <div>
+            <p className="eyebrow">SuperMew style workspace</p>
+            <h1>{activePage.title}</h1>
+            <p>{activePage.subtitle}</p>
+          </div>
+          <div className="header-badges">
+            <span>L1/L2/L3</span>
+            <span>Auto-merge</span>
+            <span>Trace</span>
+          </div>
+        </header>
+
+        <section className="workspace-body">
           {page === "upload" && <Upload />}
           {page === "docs" && <Documents />}
           {page === "search" && <Search />}
           {page === "chat" && <Chat />}
-        </div>
+        </section>
       </main>
     </div>
   );

@@ -1,0 +1,59 @@
+[
+  {
+    "id": 1,
+    "question": "在Agentic RAG中，为什么要同时使用followup rewrite、hybrid retrieval和rerank？它们分别解决什么问题？",
+    "gold_answer": "followup rewrite用于把依赖历史上下文的追问改写成独立问题，hybrid retrieval结合向量检索和BM25关键词匹配提升召回稳定性，rerank再用Cross-Encoder等模型对候选chunk重新排序，从而提升最终上下文质量。",
+    "gold_chunks": [
+      {
+        "keywords": ["followup rewrite", "上下文依赖", "独立问题"]
+      },
+      {
+        "keywords": ["hybrid retrieval", "向量检索", "BM25"]
+      },
+      {
+        "keywords": ["rerank", "Cross-Encoder", "重新排序"]
+      }
+    ],
+    "type": "in_scope"
+  },
+  {
+    "id": 2,
+    "question": "如何设计RAG缓存与fallback/refuse机制，既提升性能又降低幻觉风险？",
+    "gold_answer": "RAG缓存可以用精确缓存和语义缓存减少重复检索、embedding和LLM调用，从而降低延迟和成本；fallback/refuse机制则在证据不足、rerank分数过低或相关文档数量不足时拒答，避免模型基于噪声上下文强行生成而产生幻觉。",
+    "gold_chunks": [
+      {
+        "keywords": ["精确缓存", "语义缓存", "重复检索"]
+      },
+      {
+        "keywords": ["延迟", "成本", "LLM调用"]
+      },
+      {
+        "keywords": ["fallback", "refuse", "证据不足"]
+      },
+      {
+        "keywords": ["rerank分数", "幻觉", "拒答"]
+      }
+    ],
+    "type": "in_scope"
+  },
+  {
+    "id": 3,
+    "question": "评估RAG系统时，为什么要同时看Recall@K、Precision@K、MRR和答案忠实性？",
+    "gold_answer": "Recall@K衡量正确证据是否被召回，Precision@K衡量Top-K中噪声比例，MRR关注正确证据排在多靠前；答案忠实性则检查最终回答是否基于检索上下文，避免只看检索命中而忽略生成阶段的错误。",
+    "gold_chunks": [
+      {
+        "keywords": ["Recall@K", "正确证据", "召回"]
+      },
+      {
+        "keywords": ["Precision@K", "Top-K", "噪声"]
+      },
+      {
+        "keywords": ["MRR", "排序位置", "第一条相关证据"]
+      },
+      {
+        "keywords": ["答案忠实性", "检索上下文", "生成阶段"]
+      }
+    ],
+    "type": "in_scope"
+  }
+]

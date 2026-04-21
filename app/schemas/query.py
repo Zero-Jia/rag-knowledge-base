@@ -27,6 +27,13 @@ class QueryRequest(BaseModel):
 class RetrievedChunk(BaseModel):
     text: str
     document_id: int
+    chunk_index: Optional[int] = None
+    chunk_id: Optional[str] = None
+    chunk_level: Optional[int] = None
+    parent_chunk_id: Optional[str] = None
+    root_chunk_id: Optional[str] = None
+    auto_merged: Optional[bool] = None
+    merged_child_count: Optional[int] = None
     score: Optional[float] = None
     rerank_score: Optional[float] = None
 

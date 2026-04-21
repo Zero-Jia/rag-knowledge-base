@@ -5,6 +5,7 @@ from app.agent.tools.cache_tool import (
     lookup_exact_cache,
     lookup_semantic_cache,
 )
+from app.schemas.rag_trace import set_cache_hit
 
 
 def cache_node(state: AgentState) -> AgentState:
@@ -21,11 +22,14 @@ def cache_node(state: AgentState) -> AgentState:
     question = (state.get("question") or "").strip()
     route = state.get("route", "kb_qa")
     debug_info: Dict[str, Any] = state.get("debug_info", {})
+    rag_trace: Dict[str, Any] = state.get("rag_trace", {})
 
     # 1. chat 直接跳过缓存
     if route == "chat":
         debug_info["cache_status"] = "skipped_for_chat"
         state["cache_hit"] = False
+        set_cache_hit(rag_trace, False)
+        state["rag_trace"] = rag_trace
         state["debug_info"] = debug_info
         return state
 
@@ -33,12 +37,16 @@ def cache_node(state: AgentState) -> AgentState:
     if not question:
         debug_info["cache_status"] = "empty_question"
         state["cache_hit"] = False
+        set_cache_hit(rag_trace, False)
+        state["rag_trace"] = rag_trace
         state["debug_info"] = debug_info
         return state
 
     # 3. followup 直接跳过所有缓存，避免在 rewrite 前被缓存截胡
     if route == "followup":
         state["cache_hit"] = False
+        set_cache_hit(rag_trace, False)
+        state["rag_trace"] = rag_trace
         debug_info["cache_status"] = "skip_all_for_followup"
         state["debug_info"] = debug_info
         return state
@@ -55,6 +63,8 @@ def cache_node(state: AgentState) -> AgentState:
     )
     if exact_cached is not None:
         state["cache_hit"] = True
+        set_cache_hit(rag_trace, True)
+        state["rag_trace"] = rag_trace
         state["cached_answer"] = exact_cached.get("answer")
         state["final_answer"] = exact_cached.get("answer")
         debug_info["cache_status"] = "exact_hit"
@@ -69,6 +79,8 @@ def cache_node(state: AgentState) -> AgentState:
     )
     if semantic_cached is not None:
         state["cache_hit"] = True
+        set_cache_hit(rag_trace, True)
+        state["rag_trace"] = rag_trace
         state["cached_answer"] = semantic_cached.get("answer")
         state["final_answer"] = semantic_cached.get("answer")
         debug_info["cache_status"] = "semantic_hit"
@@ -78,6 +90,8 @@ def cache_node(state: AgentState) -> AgentState:
 
     # 6. 最终 miss
     state["cache_hit"] = False
+    set_cache_hit(rag_trace, False)
+    state["rag_trace"] = rag_trace
     debug_info["cache_status"] = "miss"
     state["debug_info"] = debug_info
     return state

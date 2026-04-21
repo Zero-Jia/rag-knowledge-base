@@ -5,25 +5,21 @@ import { apiFetch } from "../api/client";
 export default function Login({ onSwitchToRegister }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState(null);
+  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  async function handleSubmit(e) {
-    e.preventDefault();
-    setError(null);
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setError("");
     setLoading(true);
 
     try {
-      const data = await login(username, password);
+      const data = await login(username.trim(), password);
       const token = data?.access_token || data?.token;
       if (!token) throw new Error("No access_token in response");
 
-      // ✅ 改为 sessionStorage：关闭标签页/浏览器后自动失效
       sessionStorage.setItem("access_token", token);
-
-      // 验证 token 是否有效
       await apiFetch("/documents", { method: "GET" });
-
       window.location.reload();
     } catch (err) {
       setError(err?.message || "Login failed");
@@ -33,68 +29,58 @@ export default function Login({ onSwitchToRegister }) {
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 flex items-center justify-center px-4">
-      <div className="w-full max-w-md bg-white rounded-xl shadow-sm p-8 space-y-6">
-        <div className="text-center">
-          <h1 className="text-2xl font-semibold">RAG Knowledge Base</h1>
-          <p className="text-sm text-gray-500 mt-1">Sign in to continue</p>
+    <main className="auth-screen">
+      <section className="auth-card">
+        <div className="brand-block auth-brand">
+          <div className="brand-mark">R</div>
+          <div>
+            <div className="brand-title">RAG Studio</div>
+            <div className="brand-subtitle">Sign in</div>
+          </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="text-sm font-medium">Username</label>
+        <form className="auth-form" onSubmit={handleSubmit}>
+          <label>
+            <span>Username</span>
             <input
+              className="field"
               value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              className="w-full mt-1 border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-black"
-              placeholder="Enter username"
+              onChange={(event) => setUsername(event.target.value)}
               autoComplete="username"
+              placeholder="Enter username"
             />
-          </div>
+          </label>
 
-          <div>
-            <label className="text-sm font-medium">Password</label>
+          <label>
+            <span>Password</span>
             <input
+              className="field"
               type="password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full mt-1 border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-black"
-              placeholder="Enter password"
+              onChange={(event) => setPassword(event.target.value)}
               autoComplete="current-password"
+              placeholder="Enter password"
             />
-          </div>
+          </label>
 
-          {error && (
-            <div className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">
-              {error}
-            </div>
-          )}
+          {error && <div className="alert error">{error}</div>}
 
           <button
             type="submit"
-            disabled={!username || !password || loading}
-            className="w-full py-2 rounded-lg bg-black text-white font-medium hover:bg-gray-800 disabled:bg-gray-400 transition"
+            className="primary-button full-width"
+            disabled={!username.trim() || !password || loading}
           >
-            {loading ? "Signing in..." : "Login"}
+            {loading ? "Signing in" : "Login"}
           </button>
         </form>
 
-        {/* ✅ 新增：去注册入口 */}
-        <div className="text-sm text-gray-500 text-center">
-          No account?{" "}
-          <button
-            type="button"
-            onClick={onSwitchToRegister}
-            className="text-black font-medium hover:underline"
-          >
+        <div className="auth-switch">
+          <span>No account?</span>
+          <button type="button" onClick={onSwitchToRegister}>
             Create one
           </button>
         </div>
-
-        <div className="text-xs text-gray-400 text-center">
-          Tip: Token will be stored in SessionStorage
-        </div>
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }

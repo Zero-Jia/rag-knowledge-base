@@ -1,19 +1,20 @@
-from langgraph.graph import StateGraph, END
+from langgraph.graph import END, StateGraph
 
-from app.agent.state import AgentState
-from app.agent.nodes.classify_node import classify_node
-from app.agent.nodes.cache_node import cache_node
-from app.agent.nodes.rewrite_node import rewrite_node
-from app.agent.nodes.retrieve_node import retrieve_node
-from app.agent.nodes.rerank_node import rerank_node
 from app.agent.nodes.answer_node import answer_node
+from app.agent.nodes.cache_node import cache_node
+from app.agent.nodes.classify_node import classify_node
 from app.agent.nodes.fallback_node import fallback_node
+from app.agent.nodes.grade_documents_node import grade_documents_node
+from app.agent.nodes.query_expansion_node import query_expansion_node
+from app.agent.nodes.rerank_expanded_node import rerank_expanded_node
+from app.agent.nodes.rerank_node import rerank_node
+from app.agent.nodes.retrieve_expanded_node import retrieve_expanded_node
+from app.agent.nodes.retrieve_node import retrieve_node
+from app.agent.nodes.rewrite_node import rewrite_node
+from app.agent.state import AgentState
 
 
 def route_after_classify(state: AgentState) -> str:
-    """
-    classify_node 之后的路由逻辑
-    """
     route = state.get("route", "kb_qa")
     if route == "chat":
         return "answer"
@@ -21,9 +22,6 @@ def route_after_classify(state: AgentState) -> str:
 
 
 def route_after_cache(state: AgentState) -> str:
-    """
-    cache_node 之后的路由逻辑
-    """
     if state.get("cache_hit") is True:
         return "end"
 
@@ -31,15 +29,19 @@ def route_after_cache(state: AgentState) -> str:
     if route == "followup":
         return "rewrite"
 
-    return "retrieve"
+    return "retrieve_initial"
 
 
-def route_after_rerank(state: AgentState) -> str:
+def route_after_grade_documents(state: AgentState) -> str:
     """
-    rerank_node 之后的路由逻辑：
-    - 证据不足 -> fallback
-    - 证据足够 -> answer
+    NEW: evidence gate after rerank.
+
+    - sufficient evidence -> answer
+    - insufficient first pass -> query_expansion
+    - insufficient after expansion -> fallback
     """
+    if state.get("need_query_expansion") is True:
+        return "query_expansion"
     if state.get("need_fallback") is True:
         return "fallback"
     return "answer"
@@ -47,21 +49,43 @@ def route_after_rerank(state: AgentState) -> str:
 
 def build_agent_graph():
     """
-    第9天版本：
-    classify -> (chat ? answer : cache)
-    cache -> (hit ? END : followup走rewrite，否则retrieve)
-    rewrite -> retrieve -> rerank
-    rerank -> (fallback / answer)
-    fallback -> END
-    answer -> END
+    Phase 2 graph:
+
+    classify
+      -> cache
+      -> rewrite
+      -> retrieve_initial
+      -> rerank_initial
+      -> grade_documents
+           -> answer
+           -> query_expansion
+                -> retrieve_expanded
+                -> rerank_expanded
+                -> grade_documents
+                     -> answer / fallback
+
+    NEW nodes:
+    - grade_documents
+    - query_expansion
+    - retrieve_expanded
+    - rerank_expanded
     """
     workflow = StateGraph(AgentState)
 
     workflow.add_node("classify", classify_node)
     workflow.add_node("cache", cache_node)
     workflow.add_node("rewrite", rewrite_node)
-    workflow.add_node("retrieve", retrieve_node)
-    workflow.add_node("rerank", rerank_node)
+
+    # Existing nodes reused as initial retrieval/rerank.
+    workflow.add_node("retrieve_initial", retrieve_node)
+    workflow.add_node("rerank_initial", rerank_node)
+
+    # NEW: evidence grading and recovery branch.
+    workflow.add_node("grade_documents", grade_documents_node)
+    workflow.add_node("query_expansion", query_expansion_node)
+    workflow.add_node("retrieve_expanded", retrieve_expanded_node)
+    workflow.add_node("rerank_expanded", rerank_expanded_node)
+
     workflow.add_node("fallback", fallback_node)
     workflow.add_node("answer", answer_node)
 
@@ -82,21 +106,27 @@ def build_agent_graph():
         {
             "end": END,
             "rewrite": "rewrite",
-            "retrieve": "retrieve",
+            "retrieve_initial": "retrieve_initial",
         },
     )
 
-    workflow.add_edge("rewrite", "retrieve")
-    workflow.add_edge("retrieve", "rerank")
+    workflow.add_edge("rewrite", "retrieve_initial")
+    workflow.add_edge("retrieve_initial", "rerank_initial")
+    workflow.add_edge("rerank_initial", "grade_documents")
 
     workflow.add_conditional_edges(
-        "rerank",
-        route_after_rerank,
+        "grade_documents",
+        route_after_grade_documents,
         {
-            "fallback": "fallback",
             "answer": "answer",
+            "query_expansion": "query_expansion",
+            "fallback": "fallback",
         },
     )
+
+    workflow.add_edge("query_expansion", "retrieve_expanded")
+    workflow.add_edge("retrieve_expanded", "rerank_expanded")
+    workflow.add_edge("rerank_expanded", "grade_documents")
 
     workflow.add_edge("fallback", END)
     workflow.add_edge("answer", END)

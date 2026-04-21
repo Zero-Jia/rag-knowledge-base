@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.exceptions import AppError
 from app.models.document import Document
+from app.models.parent_chunk import ParentChunk
 from app.services.vector_store import VectorStore
 
 
@@ -70,6 +71,9 @@ def delete_document_full(db: Session, document_id: int, user_id: int):
     # 3 删除数据库
     # -------------------------
     try:
+        db.query(ParentChunk).filter(ParentChunk.document_id == document_id).delete(
+            synchronize_session=False
+        )
         db.delete(doc)
         db.commit()
     except Exception as e:

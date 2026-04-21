@@ -1,12 +1,14 @@
 import time
 import logging
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 
 from app.security import get_current_user
 from app.services.chat_service import chat_with_rag, stream_chat_with_rag
 from app.services.agent_chat_service import agent_chat
+from app.services.agent_stream_service import stream_agent_chat_sse
+from app.services.agent_memory_service import get_session_messages, list_chat_sessions
 from app.services.llm_service import LLMServiceError
 from app.services.request_context import get_request_id
 from app.schemas.common import APIResponse
@@ -167,6 +169,106 @@ def chat_agent_api(
             status_code=500,
             details=str(e),
         )
+
+
+@router.post(
+    "/agent/stream",
+    summary="Chat with Agentic RAG (SSE streaming)",
+    description=(
+        "Stream Agentic RAG progress and answer using Server-Sent Events.\n\n"
+        "Events: `rag_step`, `content`, `trace`, `error`, `done`."
+    ),
+)
+def chat_agent_stream_api(
+    req: AgentChatRequest,
+    current_user=Depends(get_current_user),
+):
+    rid = get_request_id()
+    q = (req.question or "").strip()
+    if not q:
+        raise AppError(code="EMPTY_QUESTION", message="question cannot be empty", status_code=400)
+
+    q_preview = q.replace("\n", " ")[:80]
+    logger.info(
+        "/chat/agent/stream | rid=%s | user=%s | session_id=%s | top_k=%s | history_count=%s | q_len=%s | q_preview='%s'",
+        rid,
+        current_user.id,
+        req.session_id,
+        req.top_k,
+        len(req.chat_history),
+        len(q),
+        q_preview,
+    )
+
+    return StreamingResponse(
+        stream_agent_chat_sse(
+            q,
+            user_id=current_user.id,
+            session_id=req.session_id,
+            top_k=req.top_k,
+            rerank_top_n=req.rerank_top_n,
+            rerank_score_threshold=req.rerank_score_threshold,
+            chat_history=[msg.model_dump() for msg in req.chat_history],
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get(
+    "/agent/sessions",
+    summary="List persistent agent chat sessions",
+    response_model=APIResponse,
+)
+def list_agent_chat_sessions_api(
+    request: Request,
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    current_user=Depends(get_current_user),
+):
+    data = list_chat_sessions(
+        user_id=current_user.id,
+        limit=limit,
+        offset=offset,
+    )
+    return APIResponse(
+        success=True,
+        data=data,
+        error=None,
+        trace_id=getattr(request.state, "trace_id", None),
+    )
+
+
+@router.get(
+    "/agent/sessions/{session_id}/messages",
+    summary="Get persistent messages for an agent chat session",
+    response_model=APIResponse,
+)
+def get_agent_chat_session_messages_api(
+    session_id: str,
+    request: Request,
+    include_trace: bool = Query(False),
+    limit: int = Query(100, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    current_user=Depends(get_current_user),
+):
+    data = get_session_messages(
+        session_id=session_id,
+        user_id=current_user.id,
+        include_trace=include_trace,
+        limit=limit,
+        offset=offset,
+    )
+    return APIResponse(
+        success=True,
+        data=data,
+        error=None,
+        trace_id=getattr(request.state, "trace_id", None),
+    )
 
 
 @router.post(

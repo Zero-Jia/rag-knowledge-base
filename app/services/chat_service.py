@@ -11,6 +11,12 @@ from app.services.semantic_cache_service import (
     find_semantic_cached_answer,
     save_semantic_cache,
 )
+from app.schemas.rag_trace import (
+    create_rag_trace,
+    record_timing,
+    set_cache_hit,
+    set_fallback_reason,
+)
 from app.exceptions import AppError
 from app.core.config import settings
 
@@ -50,6 +56,11 @@ def chat_with_rag(
     if not q:
         raise AppError(code="EMPTY_QUESTION", message="question cannot be empty", status_code=400)
 
+    rag_trace = create_rag_trace(
+        original_query=q,
+        retrieval_mode=retrieval_mode,
+    )
+
     cache_key = _build_chat_cache_key(
         question=q,
         user_id=user_id,
@@ -69,6 +80,9 @@ def chat_with_rag(
             cached.setdefault("cache_type", "exact")
             cached.setdefault("semantic_similarity", None)
             cached.setdefault("matched_cached_question", None)
+            set_cache_hit(rag_trace, True)
+            record_timing(rag_trace, "total_ms", elapsed * 1000.0)
+            cached["rag_trace"] = rag_trace
 
         logger.info(f"chat exact_cache_hit | rid={rid} | key={cache_key} | time={elapsed:.3f}s")
         return cached
@@ -88,6 +102,9 @@ def chat_with_rag(
         set_cache(cache_key, semantic_cached)
 
         elapsed = time.time() - start
+        set_cache_hit(rag_trace, True)
+        record_timing(rag_trace, "total_ms", elapsed * 1000.0)
+        semantic_cached["rag_trace"] = rag_trace
         logger.info(
             "chat semantic_cache_hit | rid=%s | similarity=%.4f | time=%.3fs",
             rid,
@@ -102,9 +119,14 @@ def chat_with_rag(
     # 3) 正常 RAG
     # =========================
     try:
-        chunks = rag_retrieve(q)
+        retrieval_start = time.time()
+        chunks = rag_retrieve(q, rag_trace=rag_trace)
+        record_timing(rag_trace, "retrieval_call_ms", (time.time() - retrieval_start) * 1000.0)
         messages = build_messages(q, chunks)
+
+        answer_start = time.time()
         answer = generate_answer(messages)
+        record_timing(rag_trace, "answer_ms", (time.time() - answer_start) * 1000.0)
 
         payload = {
             "question": q,
@@ -114,6 +136,7 @@ def chat_with_rag(
             "cache_type": "none",
             "semantic_similarity": None,
             "matched_cached_question": None,
+            "rag_trace": rag_trace,
         }
 
         # exact cache
@@ -128,6 +151,7 @@ def chat_with_rag(
         )
 
         elapsed = time.time() - start
+        record_timing(rag_trace, "total_ms", elapsed * 1000.0)
         logger.info(
             f"chat done | rid={rid} | chunks={len(chunks)} | answer_chars={len(answer)} | time={elapsed:.3f}s"
         )
@@ -135,6 +159,8 @@ def chat_with_rag(
 
     except LLMServiceError as e:
         elapsed = time.time() - start
+        set_fallback_reason(rag_trace, str(e))
+        record_timing(rag_trace, "total_ms", elapsed * 1000.0)
         logger.error(f"chat llm_fail | rid={rid} | time={elapsed:.3f}s | error={e}")
         raise AppError(
             code="LLM_UPSTREAM_ERROR",
@@ -148,6 +174,8 @@ def chat_with_rag(
 
     except Exception as e:
         elapsed = time.time() - start
+        set_fallback_reason(rag_trace, str(e))
+        record_timing(rag_trace, "total_ms", elapsed * 1000.0)
         logger.error(f"chat fail | rid={rid} | time={elapsed:.3f}s | error={e}")
         raise AppError(
             code="CHAT_INTERNAL_ERROR",

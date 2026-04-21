@@ -1,13 +1,32 @@
-// ✅ 先读 Vite 环境变量（docker compose 会注入）
-// 本地开发没配时，默认回退到 127.0.0.1
-const API_BASE =
+export const API_BASE =
   import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ||
   "http://127.0.0.1:8000";
 
-export async function apiFetch(path, options = {}) {
-  // ✅ 改为 sessionStorage
-  const token = sessionStorage.getItem("access_token");
+export function getToken() {
+  return (
+    sessionStorage.getItem("access_token") ||
+    localStorage.getItem("access_token")
+  );
+}
 
+export function clearToken() {
+  sessionStorage.removeItem("access_token");
+  localStorage.removeItem("access_token");
+}
+
+function normalizeError(payload, status) {
+  if (!payload) return `Request failed (${status})`;
+
+  const detail = payload?.error?.message || payload?.error || payload?.detail;
+  if (Array.isArray(detail)) {
+    return detail.map((item) => item?.msg || JSON.stringify(item)).join("; ");
+  }
+  if (typeof detail === "object") return JSON.stringify(detail);
+  return detail || `Request failed (${status})`;
+}
+
+export async function apiFetch(path, options = {}) {
+  const token = getToken();
   const headers = {
     ...(options.headers || {}),
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -21,34 +40,34 @@ export async function apiFetch(path, options = {}) {
   }
 
   const normPath = path.startsWith("/") ? path : `/${path}`;
-
   const resp = await fetch(`${API_BASE}${normPath}`, {
     ...options,
     headers,
   });
 
-  let payload = null;
   const text = await resp.text();
+  let payload = null;
   try {
     payload = text ? JSON.parse(text) : null;
   } catch {
-    payload = null;
+    payload = text || null;
+  }
+
+  if (resp.status === 401 || resp.status === 403) {
+    clearToken();
+    throw new Error(normalizeError(payload, resp.status) || "Unauthorized");
   }
 
   if (payload && typeof payload === "object" && "success" in payload) {
     if (!resp.ok || payload.success === false) {
-      const msg =
-        payload?.error?.message ||
-        payload?.error ||
-        payload?.detail ||
-        `Request failed (${resp.status})`;
-      throw new Error(msg);
+      throw new Error(normalizeError(payload, resp.status));
     }
     return payload.data;
   }
 
   if (!resp.ok) {
-    throw new Error(`Request failed (${resp.status})`);
+    throw new Error(normalizeError(payload, resp.status));
   }
+
   return payload;
 }

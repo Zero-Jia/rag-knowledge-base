@@ -1,41 +1,34 @@
 import { useState } from "react";
-import { registerUser } from "../api/users";
 import { login } from "../api/auth";
 import { apiFetch } from "../api/client";
+import { registerUser } from "../api/users";
 
 export default function Register({ onSwitchToLogin }) {
   const [username, setUsername] = useState("");
-  const [email, setEmail] = useState(""); // optional
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-
-  const [error, setError] = useState(null);
+  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  async function handleSubmit(e) {
-    e.preventDefault();
-    setError(null);
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setError("");
     setLoading(true);
 
     try {
-      const u = username.trim();
-      const em = email.trim();
-
+      const cleanUsername = username.trim();
       await registerUser({
-        username: u,
-        email: em || null,
+        username: cleanUsername,
+        email: email.trim() || null,
         password,
       });
 
-      // ✅ 体验更顺：注册成功后自动登录（不想要就删掉这段）
-      const data = await login(u, password);
+      const data = await login(cleanUsername, password);
       const token = data?.access_token || data?.token;
       if (!token) throw new Error("No access_token in response");
 
       sessionStorage.setItem("access_token", token);
-
-      // 验证 token 是否有效（沿用你 login 的验收逻辑）
       await apiFetch("/documents", { method: "GET" });
-
       window.location.reload();
     } catch (err) {
       setError(err?.message || "Register failed");
@@ -45,78 +38,69 @@ export default function Register({ onSwitchToLogin }) {
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 flex items-center justify-center px-4">
-      <div className="w-full max-w-md bg-white rounded-xl shadow-sm p-8 space-y-6">
-        <div className="text-center">
-          <h1 className="text-2xl font-semibold">RAG Knowledge Base</h1>
-          <p className="text-sm text-gray-500 mt-1">Create an account</p>
+    <main className="auth-screen">
+      <section className="auth-card">
+        <div className="brand-block auth-brand">
+          <div className="brand-mark">R</div>
+          <div>
+            <div className="brand-title">RAG Studio</div>
+            <div className="brand-subtitle">Create account</div>
+          </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="text-sm font-medium">Username</label>
+        <form className="auth-form" onSubmit={handleSubmit}>
+          <label>
+            <span>Username</span>
             <input
+              className="field"
               value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              className="w-full mt-1 border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-black"
-              placeholder="Choose a username"
+              onChange={(event) => setUsername(event.target.value)}
               autoComplete="username"
+              placeholder="Choose a username"
             />
-          </div>
+          </label>
 
-          <div>
-            <label className="text-sm font-medium">Email (optional)</label>
+          <label>
+            <span>Email</span>
             <input
+              className="field"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full mt-1 border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-black"
-              placeholder="alice@example.com"
+              onChange={(event) => setEmail(event.target.value)}
               autoComplete="email"
+              placeholder="Optional email"
             />
-          </div>
+          </label>
 
-          <div>
-            <label className="text-sm font-medium">Password</label>
+          <label>
+            <span>Password</span>
             <input
+              className="field"
               type="password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full mt-1 border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-black"
-              placeholder="Create a password"
+              onChange={(event) => setPassword(event.target.value)}
               autoComplete="new-password"
+              placeholder="Create a password"
             />
-          </div>
+          </label>
 
-          {error && (
-            <div className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">
-              {error}
-            </div>
-          )}
+          {error && <div className="alert error">{error}</div>}
 
           <button
             type="submit"
-            disabled={!username || !password || loading}
-            className="w-full py-2 rounded-lg bg-black text-white font-medium hover:bg-gray-800 disabled:bg-gray-400 transition"
+            className="primary-button full-width"
+            disabled={!username.trim() || !password || loading}
           >
-            {loading ? "Creating..." : "Register"}
+            {loading ? "Creating" : "Register"}
           </button>
         </form>
 
-        <div className="text-sm text-gray-500 text-center">
-          Already have an account?{" "}
-          <button
-            type="button"
-            onClick={onSwitchToLogin}
-            className="text-black font-medium hover:underline"
-          >
+        <div className="auth-switch">
+          <span>Already have an account?</span>
+          <button type="button" onClick={onSwitchToLogin}>
             Login
           </button>
         </div>
-
-        <div className="text-xs text-gray-400 text-center">
-          Tip: Token will be stored in SessionStorage
-        </div>
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }

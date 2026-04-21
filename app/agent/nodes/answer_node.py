@@ -1,38 +1,39 @@
+import time
 from typing import Any, Dict, List
 
 from app.agent.state import AgentState
 from app.agent.tools.cache_tool import save_agent_cache
-from app.services.prompt_builder import build_messages
+from app.schemas.rag_trace import record_timing, set_fallback_reason
 from app.services.llm_service import generate_answer
+from app.services.prompt_builder import build_messages
 
 
 def answer_node(state: AgentState) -> AgentState:
     """
-    Agent 回答节点
+    Agent answer node.
 
-    当前版本逻辑：
-    1. 如果缓存已命中，则直接跳过
-    2. 如果 route == chat，则直接用简单 messages 调 LLM
-    3. 否则优先使用 reranked_docs，其次 retrieved_docs
-    4. 如果上下文为空，则返回兜底回答
-    5. 成功后保存 final_answer
+    It also records answer-stage timing into rag_trace. Existing state fields
+    and return shape are preserved.
     """
     debug_info: Dict[str, Any] = state.get("debug_info", {})
+    rag_trace: Dict[str, Any] = state.get("rag_trace", {})
     question = (state.get("question") or "").strip()
     route = state.get("route", "kb_qa")
 
     if state.get("cache_hit") is True:
         debug_info["answer_status"] = "skipped_due_to_cache_hit"
+        state["rag_trace"] = rag_trace
         state["debug_info"] = debug_info
         return state
 
     if not question:
         state["final_answer"] = "问题不能为空。"
+        set_fallback_reason(rag_trace, "empty_question")
         debug_info["answer_status"] = "empty_question"
+        state["rag_trace"] = rag_trace
         state["debug_info"] = debug_info
         return state
 
-    # 1) chat 模式：直接调用 LLM，不走知识库上下文
     if route == "chat":
         messages = [
             {
@@ -44,36 +45,42 @@ def answer_node(state: AgentState) -> AgentState:
                 "content": question,
             },
         ]
+        answer_start = time.time()
         answer = generate_answer(messages)
+        record_timing(rag_trace, "answer_ms", (time.time() - answer_start) * 1000.0)
 
         state["final_answer"] = answer
         debug_info["answer_status"] = "chat_success"
         debug_info["used_context"] = "none"
         debug_info["answer_chars"] = len(answer)
+        state["rag_trace"] = rag_trace
         state["debug_info"] = debug_info
         return state
 
-    # 2) kb_qa / followup 模式：使用知识库上下文
     reranked_docs: List[Dict[str, Any]] = state.get("reranked_docs", [])
     retrieved_docs: List[Dict[str, Any]] = state.get("retrieved_docs", [])
-
     context_docs = reranked_docs if reranked_docs else retrieved_docs
 
     if not context_docs:
         state["final_answer"] = "当前知识库中没有检索到足够相关的内容，暂时无法给出可靠答案。"
+        set_fallback_reason(rag_trace, "no_context_docs")
         debug_info["answer_status"] = "no_context_docs"
         debug_info["context_doc_count"] = 0
+        state["rag_trace"] = rag_trace
         state["debug_info"] = debug_info
         return state
 
     messages = build_messages(question, context_docs)
+    answer_start = time.time()
     answer = generate_answer(messages)
+    record_timing(rag_trace, "answer_ms", (time.time() - answer_start) * 1000.0)
 
     state["final_answer"] = answer
     debug_info["answer_status"] = "success"
     debug_info["context_doc_count"] = len(context_docs)
     debug_info["used_context"] = "reranked_docs" if reranked_docs else "retrieved_docs"
     debug_info["answer_chars"] = len(answer)
+    state["rag_trace"] = rag_trace
     state["debug_info"] = debug_info
 
     user_id = debug_info.get("user_id")
