@@ -11,3 +11,10 @@ storage/
 .env
 .env.*
 !.env.example
+
+# Virtualenv
+.venv/
+.venv_old_313/
+
+# Node
+node_modules/

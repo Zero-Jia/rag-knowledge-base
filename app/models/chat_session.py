@@ -42,7 +42,6 @@ class ChatMessage(Base):
     __tablename__ = "chat_messages"
     __table_args__ = (
         Index("ix_chat_messages_session_created", "session_id", "created_at"),
-        Index("ix_chat_messages_session_id", "chat_session_id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
