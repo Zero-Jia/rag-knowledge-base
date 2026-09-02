@@ -47,6 +47,7 @@ def retrieve_chunks(
     top_k: int = settings.TOP_K,
     *,
     auto_merge: bool = True,
+    user_id: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     embedder = EmbeddingService()
     store = VectorStore()
@@ -56,7 +57,9 @@ def retrieve_chunks(
     else:
         query_vec = embedder.embed_texts(query)
 
-    results = store.search(query_vec,top_k)
+    # P0-3: 租户隔离，user_id 非 None 时按 user_id 过滤
+    where = {"user_id": user_id} if user_id is not None else None
+    results = store.search(query_vec, top_k, where=where)
 
     documents = results.get("documents",[[]])[0]
     metadatas = results.get("metadatas",[[]])[0]
@@ -74,9 +77,15 @@ def retrieve_chunks(
     return chunks
 
 
-def retrieve_all_chunks(limit: int | None = None) -> List[Dict[str, Any]]:
+def retrieve_all_chunks(
+    limit: int | None = None,
+    *,
+    user_id: Optional[int] = None,
+) -> List[Dict[str, Any]]:
     store = VectorStore()
-    payload = store.get_texts(limit=limit)
+    # P0-3: 租户隔离
+    where = {"user_id": user_id} if user_id is not None else None
+    payload = store.get_texts(where=where, limit=limit)
 
     documents = payload.get("documents", []) or []
     metadatas = payload.get("metadatas", []) or []

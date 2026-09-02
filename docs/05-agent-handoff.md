@@ -8,30 +8,32 @@
 
 - 项目已完成 Self-RAG / Corrective RAG 基础能力
 - 文档体系已建立（`/docs`），企业级改造进行中
-- **当前进行阶段：P0（已完成 P0-1、P0-2）**
+- **当前进行阶段：P0（已完成 P0-1、P0-2、P0-3、P0-4）**
 - P0-1 已完成：answer_node 输出 `[1][2]` inline citation，state 新增 `citations` 字段（index/chunk_id/text/source/score），非流式与 SSE trace 事件均返回；回归通过（20 case，answer_correctness 0.9，17/20 带引用）
 - P0-2 已完成：新增 `grounding_check_node`，answer→grounding_check→(fallback|END)，LLM 判断答案是否被证据支持，不通过走 fallback；chat/cache/无证据场景短路放行，LLM/解析故障保守放行；state 新增 `grounding_passed`/`grounding_reason`；回归通过（20 case，20/20 grounding passed 无误杀，correctness 0.9 持平基线）
-- **下一个待办任务：P0-3**
+- P0-3 已完成：检索层 user_id 透传 + ChromaDB where 过滤（retrieval_service/hybrid_retrieval/vector_tool/retrieve_node），user_id None 兼容旧数据；评估 user_id=1 correctness 0.9 持平基线
+- P0-4 已完成：indexing non-hierarchy 写 user_id metadata + vector_store update_metadatas + reindex 脚本回填 169 chunks；hierarchy 路径 _base_metadata 已写 user_id；Document model 已有 user_id 无需改
+- **下一个待办任务：P0-5**
 
 ## 下一步优先做什么
 
 按 `03-task-backlog.md` 中状态为 `todo` 的任务，按编号顺序推进。当前推荐起点：
 
-### P0-3：检索租户隔离
+### P0-5：接入 Langfuse
 
-- **位置**：`app/agent/tools/vector_tool.py`、`hybrid_tool.py` + `app/agent/nodes/retrieve_node.py` + `app/routers/chat.py` + `app/services/agent_chat_service.py`、`agent_stream_service.py`
-- **目标**：检索时按 `user_id`/`tenant_id` 过滤，保证多租户数据隔离
+- **位置**：新增 `app/services/langfuse_service.py` + middleware + 各 node trace 注入
+- **目标**：把 `rag_trace` 标准化导出到 Langfuse，支持 trace 可视化与 token/延迟统计
 - **要点**：
-  - vector/hybrid 工具查询时加 ChromaDB `where={"user_id": user_id}`
-  - `retrieve_node` 从 state 取 user_id（由 chat 入口注入）
-  - chat 入口（router + service）把当前用户 id 注入 state
-  - 不涉及 prompt 改动，无需跑评估回归
-- 详细设计见 `03-task-backlog.md` 的"P0-3 详细设计"
+  - 新增 langfuse_service 封装 Langfuse client + span/trace 上报
+  - agent 执行入口（agent_chat/stream_service）注入 trace
+  - 不涉及 prompt 改动，无需跑评估回归（但需后端能启动）
+  - 需要 Langfuse 公钥/私钥配置（.env）
+- 详细设计见 `03-task-backlog.md` 的"P0-5 详细设计"
 
 ### 推荐推进顺序
 
-1. **P0-3 + P0-4**（租户隔离，可并行；P0-4 完成后把 citations.source 换成文档名）
-2. **P0-5**（Langfuse 接入）→ 3. **P0-6**（token/成本统计）
+1. **P0-5**（Langfuse 接入）→ 2. **P0-6**（token/成本统计）→ P0 阶段收尾
+3. P0 完成后进入 P1（ReAct agent 改造）
 
 ## 开始开发前必做
 

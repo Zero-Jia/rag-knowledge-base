@@ -21,8 +21,8 @@ from app.schemas.rag_trace import (
 
 logger = logging.getLogger("rag.perf")
 
-# P0-1：检索结果新增 chunk_id 兜底字段，升版本使旧缓存条目（无 chunk_id）失效
-HYBRID_CACHE_VERSION = "hybrid_v5_citation_chunk_id"
+# P0-3：检索新增 user_id where 过滤，升版本使旧缓存条目（无租户过滤）失效
+HYBRID_CACHE_VERSION = "hybrid_v6_tenant_isolation"
 
 
 def _build_search_cache_key(
@@ -112,7 +112,12 @@ def _is_l3_chunk(item: Dict[str, Any]) -> bool:
         return True
 
 
-def _keyword_recall(query: str, top_k: int) -> List[Dict[str, Any]]:
+def _keyword_recall(
+    query: str,
+    top_k: int,
+    *,
+    user_id: Optional[int] = None,
+) -> List[Dict[str, Any]]:
     """
     Keyword recall over vector-store leaf chunks.
 
@@ -120,7 +125,11 @@ def _keyword_recall(query: str, top_k: int) -> List[Dict[str, Any]]:
     chunk_level metadata, chunks are treated as L3-compatible.
     """
     max_keyword_pool = int(getattr(settings, "HYBRID_KEYWORD_POOL_LIMIT", 2000))
-    all_chunks = [item for item in retrieve_all_chunks(limit=max_keyword_pool) if _is_l3_chunk(item)]
+    all_chunks = [
+        item
+        for item in retrieve_all_chunks(limit=max_keyword_pool, user_id=user_id)
+        if _is_l3_chunk(item)
+    ]
     if not all_chunks:
         return []
 
@@ -322,12 +331,12 @@ def hybrid_retrieve(
     # Important: first-stage recall must stay at L3. Do not merge before scoring
     # or rerank candidates will receive parent text too early.
     vector_start = now_ms()
-    vector_results = retrieve_chunks(q, candidate_k, auto_merge=False) or []
+    vector_results = retrieve_chunks(q, candidate_k, auto_merge=False, user_id=user_id) or []
     record_timing(trace, "vector_recall_ms", elapsed_ms(vector_start))
 
     try:
         keyword_start = now_ms()
-        keyword_results = _keyword_recall(q, candidate_k)
+        keyword_results = _keyword_recall(q, candidate_k, user_id=user_id)
         record_timing(trace, "keyword_recall_ms", elapsed_ms(keyword_start))
     except Exception as exc:
         logger.warning("keyword_recall_failed | err=%s", exc)

@@ -65,6 +65,7 @@ def retrieve_node(state: AgentState) -> AgentState:
     docs = vector_search_tool(
         question=effective_query,
         top_k=top_k,
+        user_id=user_id,
     )
 
     state["retrieved_docs"] = docs

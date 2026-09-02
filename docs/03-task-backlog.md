@@ -11,8 +11,8 @@
 |---|---|---|---|---|
 | P0-1 | answer_node 输出 inline citation `[1][2]` 映射 chunk_id | done | `state.py`、`nodes/answer_node.py`、`nodes/cache_node.py`、`services/prompt_builder.py`、`services/retrieval_service.py`、`services/hybrid_retrieval.py`、`services/agent_chat_service.py`、`services/agent_stream_service.py` | 引用指令加在 prompt_builder.py（答案 prompt 实际组装处）；citations.source 暂为 document_id，文档名待 P0-4 metadata 补充 |
 | P0-2 | groundedness 校验：答案生成后 LLM 判断是否被证据支持，不通过则 fallback | done | `agent/state.py`、`agent/prompts.py`、`agent/nodes/grounding_check_node.py`（新增）、`agent/nodes/fallback_node.py`、`agent/graph.py`、`agent/debug.py`、`services/agent_stream_service.py`、`services/agent_chat_service.py` | 新增 grounding_check 节点，answer→grounding_check→(fallback\|END)；LLM/解析故障保守放行；评估 20/20 grounding passed 无误杀，correctness 0.9 持平基线 |
-| P0-3 | retrieve_node / vector_tool / hybrid_tool 加 `tenant_id`/`user_id` metadata filter | todo | — | 改 `retrieve_node.py`、`tools/*.py`、向量库查询 |
-| P0-4 | 文档上传时写入 `tenant_id`/`owner_id` metadata | todo | — | 改 `indexing_service.py`、`document_service.py`、`models/document.py` |
+| P0-3 | retrieve_node / vector_tool / hybrid_tool 加 `tenant_id`/`user_id` metadata filter | done | `services/retrieval_service.py`、`services/hybrid_retrieval.py`、`agent/tools/vector_tool.py`、`agent/nodes/retrieve_node.py` | 检索层 user_id 透传 + ChromaDB where 过滤；user_id None 兼容旧数据；升 cache v5→v6 失效旧缓存；评估 user_id=1 correctness 0.9 持平基线 |
+| P0-4 | 文档上传时写入 `tenant_id`/`owner_id` metadata | done | `services/indexing_service.py`、`services/vector_store.py`（新增 `update_metadatas`）、`scripts/reindex_user_metadata.py`（新增） | hierarchy 路径 `_base_metadata` 已写 user_id；non-hierarchy 路径补 user_id；reindex 脚本回填 169 chunks；`Document` model 已有 user_id 无需改 |
 | P0-5 | 接入 Langfuse，把 rag_trace 标准化导出 | todo | — | 新增 `services/langfuse_service.py` + middleware |
 | P0-6 | state 增加 tokens_used / cost_usd / latency_ms 字段并填充 | todo | — | 改 `state.py` + 各 node 统计 |
 

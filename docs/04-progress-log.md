@@ -18,6 +18,39 @@
 
 ---
 
+### Session 2026-09-02（P0-3 + P0-4 检索租户隔离）
+
+- **目标**：完成 P0-3（检索 where 过滤）+ P0-4（数据写 user_id metadata）合并闭环
+- **完成任务**：
+  - [P0-3] 检索层 user_id 透传 + ChromaDB where 过滤 — 改动文件：
+    - `app/services/retrieval_service.py`：`retrieve_chunks`/`retrieve_all_chunks` 加 `user_id` 参数，user_id 非 None 时 `store.search/get_texts` 传 `where={"user_id": user_id}`，None 兼容旧数据
+    - `app/services/hybrid_retrieval.py`：`_keyword_recall`/`hybrid_retrieve` 把 user_id 传给 vector_recall 与 keyword_recall（原先只用于 cache key）；`HYBRID_CACHE_VERSION` v5→v6 使旧缓存失效
+    - `app/agent/tools/vector_tool.py`：`vector_search_tool` 加 `user_id` 参数
+    - `app/agent/nodes/retrieve_node.py`：vector 回退分支传 user_id（hybrid 分支此前已传）
+  - [P0-4] 数据写 user_id metadata — 改动文件：
+    - `app/services/indexing_service.py`：non-hierarchy 分支构造 `leaf_metadatas` 显式带 `user_id: doc.user_id`（hierarchy 路径 `_base_metadata` 已写 user_id，无需改）
+    - `app/services/vector_store.py`：新增 `update_metadatas(ids, metadatas)` 方法（Chroma `collection.update` 封装）
+    - `scripts/reindex_user_metadata.py`（新增）：一次性回填脚本，遍历现有 chunks 按 document_id 查 Document 表拿 user_id，回填 metadata（不重新 embedding，幂等）
+    - 注：`Document` model 已有 `user_id` 字段，`text_processing._base_metadata` 已写 user_id，无需改
+- **关键决策**：
+  - P0-3 + P0-4 合并做：检索过滤依赖数据带 user_id，单独做 P0-3 会导致登录用户检索全空
+  - user_id None 时不过滤：保护未登录/评估/旧数据场景（向后兼容，渐进式激活）
+  - reindex 只更新 metadata 不重新 embedding：节省 token，169 chunks 秒级完成
+  - 升 HYBRID_CACHE_VERSION v5→v6：强制旧缓存失效，确保评估走新 where 过滤
+- **数据现状**：现有 34 个 Document 全部 user_id=1（169 chunks），reindex 前无 user_id metadata，reindex 后全部回填 user_id=1
+- **评估回归**（`scripts/evaluate_agent_day18.py`，评估传 user_id=1，where 命中等价全库）：
+  - 20 case 全通过，无 error，无 grounding 误杀
+  - avg_answer_correctness 0.9、avg_retrieval_recall@8 0.9、avg_rerank_recall@5 0.8（与基线完全持平，无回归）
+  - grounding 20/20 passed，0/20 grounding_failed fallback
+- **未完成/遗留**：
+  - 租户隔离的"跨租户不可见"端到端验证需多用户数据（当前仅 user_id=1）；建议 P1 阶段补一个 user_id=2 的隔离测试用例
+  - citations.source 仍为 document_id（文档名替换待后续迭代，P0-4 已写入 user_id metadata，数据层就绪）
+- **下一步建议**：
+  1. P0-5（Langfuse 接入）→ P0-6（token/成本统计），P0 阶段收尾
+  2. P0 完成后进入 P1（ReAct agent 改造）
+
+---
+
 ### Session 2026-09-02（P0-2 groundedness 校验）
 
 - **目标**：完成 P0-2，答案生成后做 faithfulness 校验，不通过则走 fallback

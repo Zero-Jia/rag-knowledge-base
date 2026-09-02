@@ -89,6 +89,16 @@ class VectorStore:
 
         return self.collection.get(**kwargs)
 
+    def update_metadatas(
+        self,
+        ids: List[str],
+        metadatas: List[Dict[str, Any]],
+    ) -> None:
+        """P0-4: 批量更新 chunks 的 metadata（用于 reindex 补 user_id）"""
+        if not ids:
+            return
+        self.collection.update(ids=ids, metadatas=metadatas)
+
     def delete(self, *, ids: Optional[List[str]] = None, where: Optional[Dict[str, Any]] = None) -> None:
         kwargs: Dict[str, Any] = {}
         if ids:

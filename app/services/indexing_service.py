@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import logging
 import time
@@ -317,6 +317,12 @@ def index_document_pipeline(document_id: int) -> None:
                 },
             )
             chunks_raw = process_text(raw_text)
+            # P0-4: non-hierarchy 路径也写 user_id metadata，支持检索租户隔离
+            leaf_metadatas = [
+                {"document_id": doc.id, "user_id": doc.user_id, "chunk_index": i}
+                for i in range(len(chunks_raw))
+            ]
+            leaf_ids = [f"doc{doc.id}_chunk{i}" for i in range(len(chunks_raw))]
         t2 = time.time()
 
         # ✅ 关键：清洗 chunks，确保都是可 encode 的 string
