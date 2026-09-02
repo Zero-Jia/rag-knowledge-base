@@ -5,6 +5,7 @@ from app.agent.nodes.cache_node import cache_node
 from app.agent.nodes.classify_node import classify_node
 from app.agent.nodes.fallback_node import fallback_node
 from app.agent.nodes.grade_documents_node import grade_documents_node
+from app.agent.nodes.grounding_check_node import grounding_check_node
 from app.agent.nodes.query_expansion_node import query_expansion_node
 from app.agent.nodes.rerank_expanded_node import rerank_expanded_node
 from app.agent.nodes.rerank_node import rerank_node
@@ -47,6 +48,18 @@ def route_after_grade_documents(state: AgentState) -> str:
     return "answer"
 
 
+def route_after_grounding(state: AgentState) -> str:
+    """
+    P0-2: faithfulness gate after answer generation.
+
+    - grounding failed (answer not supported by evidence) -> fallback
+    - grounding passed (or skipped for chat/cache/no-evidence) -> end
+    """
+    if state.get("need_fallback") is True:
+        return "fallback"
+    return "end"
+
+
 def build_agent_graph():
     """
     Phase 2 graph:
@@ -57,18 +70,15 @@ def build_agent_graph():
       -> retrieve_initial
       -> rerank_initial
       -> grade_documents
-           -> answer
+           -> answer -> grounding_check -> (fallback | END)
            -> query_expansion
                 -> retrieve_expanded
                 -> rerank_expanded
                 -> grade_documents
-                     -> answer / fallback
+           -> fallback
 
-    NEW nodes:
-    - grade_documents
-    - query_expansion
-    - retrieve_expanded
-    - rerank_expanded
+    P0-2 NEW node:
+    - grounding_check (faithfulness gate after answer, routes to fallback on failure)
     """
     workflow = StateGraph(AgentState)
 
@@ -88,6 +98,8 @@ def build_agent_graph():
 
     workflow.add_node("fallback", fallback_node)
     workflow.add_node("answer", answer_node)
+    # P0-2：groundedness 校验节点，answer 之后执行
+    workflow.add_node("grounding_check", grounding_check_node)
 
     workflow.set_entry_point("classify")
 
@@ -129,7 +141,16 @@ def build_agent_graph():
     workflow.add_edge("rerank_expanded", "grade_documents")
 
     workflow.add_edge("fallback", END)
-    workflow.add_edge("answer", END)
+    # P0-2：answer 不再直接 END，先过 grounding_check 校验
+    workflow.add_edge("answer", "grounding_check")
+    workflow.add_conditional_edges(
+        "grounding_check",
+        route_after_grounding,
+        {
+            "fallback": "fallback",
+            "end": END,
+        },
+    )
 
     return workflow.compile()
 

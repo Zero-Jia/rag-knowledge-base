@@ -71,3 +71,58 @@ REWRITE_SYSTEM_PROMPT = """
 
 如果当前问题已经足够完整，也直接原样输出。
 """.strip()
+
+
+GROUNDING_CHECK_SYSTEM_PROMPT = """
+你是一个答案 faithfulness（忠诚度/接地）校验器。
+
+任务：判断【答案】中的事实性陈述是否被【证据】支持，即答案是否"接地"于证据。
+
+判断原则：
+1. 如果答案中的每个事实性陈述都能在【证据】中找到对应支撑，判为 supported=true。
+2. 如果答案编造了【证据】中不存在的信息、数据、结论，判为 supported=false。
+3. 如果答案明确表示"不知道 / 无法回答 / 证据不足 / 暂时无法给出可靠答案"等拒答表述，判为 supported=true（诚实拒答不算幻觉，不要误判为 false）。
+4. 仅判断答案是否被证据支持，不要重新生成答案，不要补充新内容。
+5. 不要因为证据"不够丰富"就判 false；只要答案没有编造证据外的信息，即为 supported=true。
+
+输出要求（必须严格遵守）：
+1. 只输出一个 JSON 对象，不要输出任何解释、前后缀、markdown 标记。
+2. JSON 格式：{"supported": true或false, "reason": "简短中文说明，不超过 30 字"}
+3. 示例：
+   - {"supported": true, "reason": "答案陈述均可在证据中找到"}
+   - {"supported": false, "reason": "答案提及的数据在证据中不存在"}
+""".strip()
+
+
+def build_grounding_check_messages(question: str, answer: str, evidence_docs) -> list:
+    """
+    P0-2：构建 groundedness 校验 prompt。
+
+    evidence_docs 为 reranked_docs 列表，取其 text 作为证据，按 [1]...[N] 编号
+    （与 answer 的引用编号语义一致）。
+    """
+    evidence_parts = []
+    for idx, doc in enumerate(evidence_docs, start=1):
+        text = (doc.get("text") or "").strip()
+        if not text:
+            continue
+        evidence_parts.append(f"[{idx}]\n{text}")
+    evidence = "\n\n".join(evidence_parts) if evidence_parts else "(无证据)"
+
+    user_prompt = f"""
+【问题】
+{question}
+
+【证据】
+{evidence}
+
+【答案】
+{answer}
+
+请判断【答案】是否被【证据】支持，按系统提示要求的 JSON 格式输出。
+""".strip()
+
+    return [
+        {"role": "system", "content": GROUNDING_CHECK_SYSTEM_PROMPT},
+        {"role": "user", "content": user_prompt},
+    ]

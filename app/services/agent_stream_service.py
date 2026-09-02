@@ -71,6 +71,7 @@ def _step_payload(node_name: str, state: Dict[str, Any]) -> Dict[str, Any]:
             "query_expansion_status": debug_info.get("query_expansion_status"),
             "answer_status": debug_info.get("answer_status"),
             "fallback_status": debug_info.get("fallback_status"),
+            "grounding_status": debug_info.get("grounding_status"),
         },
     }
 
@@ -195,6 +196,9 @@ def stream_agent_chat_sse(
                 "reranked_docs": final_state.get("reranked_docs", []),
                 # P0-1：流式场景下 citations 随最终 trace 事件返回
                 "citations": final_state.get("citations") or [],
+                # P0-2：groundedness 校验结果随最终 trace 事件返回
+                "grounding_passed": final_state.get("grounding_passed"),
+                "grounding_reason": final_state.get("grounding_reason"),
                 "debug_info": build_agent_debug_summary(final_state),
                 "rag_trace": rag_trace,
             },

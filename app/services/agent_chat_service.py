@@ -125,6 +125,9 @@ def agent_chat(
             "reranked_docs": result.get("reranked_docs", []),
             # P0-1：非流式响应同步返回引用溯源
             "citations": result.get("citations") or [],
+            # P0-2：groundedness 校验结果
+            "grounding_passed": result.get("grounding_passed"),
+            "grounding_reason": result.get("grounding_reason"),
             "cache_hit": result.get("cache_hit", False),
             "need_fallback": result.get("need_fallback", False),
             "fallback_reason": result.get("fallback_reason"),

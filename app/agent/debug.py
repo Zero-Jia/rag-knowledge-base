@@ -43,6 +43,11 @@ def build_agent_debug_summary(result: Dict[str, Any]) -> Dict[str, Any]:
         "used_context": raw_debug.get("used_context"),
         "answer_chars": raw_debug.get("answer_chars"),
 
+        # P0-2：groundedness 校验
+        "grounding_passed": result.get("grounding_passed"),
+        "grounding_reason": result.get("grounding_reason"),
+        "grounding_status": raw_debug.get("grounding_status"),
+
         # memory / session
         "history_source": raw_debug.get("history_source"),
     }

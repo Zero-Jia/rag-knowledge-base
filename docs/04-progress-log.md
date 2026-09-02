@@ -18,6 +18,43 @@
 
 ---
 
+### Session 2026-09-02（P0-2 groundedness 校验）
+
+- **目标**：完成 P0-2，答案生成后做 faithfulness 校验，不通过则走 fallback
+- **完成任务**：
+  - [P0-2] groundedness 校验 — 改动文件：
+    - `app/agent/state.py`：新增可选字段 `grounding_passed: bool` 与 `grounding_reason: Optional[str]`（向后兼容）
+    - `app/agent/prompts.py`：新增 `GROUNDING_CHECK_SYSTEM_PROMPT` 与 `build_grounding_check_messages()`，要求 LLM 输出严格 JSON `{"supported": bool, "reason": str}`；明确拒答不算幻觉（supported=true）
+    - `app/agent/nodes/grounding_check_node.py`（新增）：answer 后的 grounding 校验节点，LLM 判断答案是否被 reranked_docs 支持；chat/cache_hit/无证据/空答案场景短路放行；LLM 故障或 JSON 解析失败保守放行（不阻断主流程）；不通过则设 need_fallback=True + fallback_reason="grounding_failed"
+    - `app/agent/nodes/fallback_node.py`：reason_to_message 新增 `grounding_failed` 兜底文案
+    - `app/agent/graph.py`：注册 grounding_check 节点，边 answer→grounding_check，条件边 route_after_grounding → (fallback | END)
+    - `app/agent/debug.py`：build_agent_debug_summary 暴露 grounding_passed/grounding_reason/grounding_status
+    - `app/services/agent_stream_service.py`：SSE trace 事件 + step_payload debug 暴露 grounding 结果
+    - `app/services/agent_chat_service.py`：非流式 payload 暴露 grounding_passed/grounding_reason
+- **未完成/遗留**：
+  - 流式场景 grounding 在 answer 流式输出完成后执行，仅在最终 trace 事件记录结果，不撤改已吐给前端的答案（撤回流式不现实）；未来若需"不合规答案不展示"需改流式架构
+  - `answer_node` 的 `save_agent_cache` 在 grounding 之前调用，若 grounding 失败走 fallback，缓存里仍存原 answer；精确缓存命中时不再过 grounding。属可接受权衡（精确缓存命中率低），P1 阶段考虑把缓存写入时机后移到 grounding 通过后
+  - 评估集为知识库内问题，无幻觉 case，grounding 20/20 全 passed（符合预期）；grounding 的真实拦截价值需在生产环境验证
+- **关键决策**：
+  - 用独立 `grounding_check_node` 而非内嵌 `answer_node`：职责分离，图结构清晰，便于 trace
+  - grounding LLM 用 `temperature=0.0` 保证判断稳定
+  - 保守放行策略：LLM/解析故障不阻断主流程（grounding 坏了不能比没有更糟），reason 标记 `llm_error_pass_through` / `parse_error_pass_through`
+  - JSON 解析容错：先 `json.loads`，失败用正则提 `supported` 字段，再失败放行
+  - 拒答答案（"无法回答"）在 prompt 里明确判 supported=true，避免误杀诚实拒答
+  - 不破坏 quick path：P0-2 在 answer 末尾加校验边，是任务范围内的图扩展，非 P1-1 的 ReAct 改造
+- **遇到的问题**：
+  - Windows PowerShell `>` / `|` 重定向 python 输出会因编码/管道转码丢内容（UTF-16、行丢失），改用 python 内 `sys.stdout=f` 重定向 + `runpy.run_path` 执行脚本，最后 `f.flush()/f.close()` 保证 20 case 全写盘
+  - `python scripts/xxx.py` 直接运行时 sys.path[0] 是 scripts 目录，找不到 `app` 包，需 `sys.path.insert(0,'.')` 或设 PYTHONPATH
+- **评估回归**（`scripts/evaluate_agent_day18.py`，涉及 prompt 新增必跑）：
+  - 20 case 全部通过，无 error，无 grounding 误杀
+  - avg_answer_correctness 0.9、avg_retrieval_recall@8 0.9、avg_rerank_recall@5 0.8（与 P0-1 基线完全持平，无回归）
+  - grounding 分布：20/20 case grounding_status=passed，0/20 failed，0/20 触发 grounding_failed fallback
+- **下一步建议**：
+  1. 做 P0-3 + P0-4（租户隔离，可并行），P0-4 完成后把 citations.source 换成文档名
+  2. P0-5（Langfuse 接入）→ P0-6（token/成本统计）
+
+---
+
 ### Session 2026-09-02（P0-1 引用溯源）
 
 - **目标**：完成 P0-1，让 answer_node 输出带 `[1][2]` 引用的答案，并在 state 中维护 `citations` 字段

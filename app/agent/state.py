@@ -37,6 +37,9 @@ class AgentState(TypedDict, total=False):
     final_answer: Optional[str]
     # P0-1 新增：答案内联引用溯源 [{index, chunk_id, text, source, score}]
     citations: List[Dict[str, Any]]
+    # P0-2 新增：groundedness 校验结果
+    grounding_passed: bool
+    grounding_reason: Optional[str]
     rag_trace: Dict[str, Any]
 
     need_retry: bool

@@ -8,28 +8,30 @@
 
 - 项目已完成 Self-RAG / Corrective RAG 基础能力
 - 文档体系已建立（`/docs`），企业级改造进行中
-- **当前进行阶段：P0（已完成 P0-1）**
+- **当前进行阶段：P0（已完成 P0-1、P0-2）**
 - P0-1 已完成：answer_node 输出 `[1][2]` inline citation，state 新增 `citations` 字段（index/chunk_id/text/source/score），非流式与 SSE trace 事件均返回；回归通过（20 case，answer_correctness 0.9，17/20 带引用）
-- **下一个待办任务：P0-2**
+- P0-2 已完成：新增 `grounding_check_node`，answer→grounding_check→(fallback|END)，LLM 判断答案是否被证据支持，不通过走 fallback；chat/cache/无证据场景短路放行，LLM/解析故障保守放行；state 新增 `grounding_passed`/`grounding_reason`；回归通过（20 case，20/20 grounding passed 无误杀，correctness 0.9 持平基线）
+- **下一个待办任务：P0-3**
 
 ## 下一步优先做什么
 
 按 `03-task-backlog.md` 中状态为 `todo` 的任务，按编号顺序推进。当前推荐起点：
 
-### P0-2：groundedness 校验
+### P0-3：检索租户隔离
 
-- **位置**：`app/agent/nodes/answer_node.py`（或新增 `grounding_check_node`）+ `app/agent/graph.py` + 复用 `fallback_node`
-- **目标**：答案生成后 LLM 判断答案是否被 `reranked_docs` 证据支持，不通过则走 fallback
+- **位置**：`app/agent/tools/vector_tool.py`、`hybrid_tool.py` + `app/agent/nodes/retrieve_node.py` + `app/routers/chat.py` + `app/services/agent_chat_service.py`、`agent_stream_service.py`
+- **目标**：检索时按 `user_id`/`tenant_id` 过滤，保证多租户数据隔离
 - **要点**：
-  - graph 增加 edge：`answer → grounding_check → (fallback | END)`，注意不破坏现有 quick path 结构
-  - 可复用 P0-1 的 `citations` 字段辅助判断
-  - 涉及 prompt 改动，改完必须跑 `scripts/evaluate_agent_day18.py` 回归
-- 详细设计见 `03-task-backlog.md` 的"P0-2 详细设计"
+  - vector/hybrid 工具查询时加 ChromaDB `where={"user_id": user_id}`
+  - `retrieve_node` 从 state 取 user_id（由 chat 入口注入）
+  - chat 入口（router + service）把当前用户 id 注入 state
+  - 不涉及 prompt 改动，无需跑评估回归
+- 详细设计见 `03-task-backlog.md` 的"P0-3 详细设计"
 
 ### 推荐推进顺序
 
-1. **P0-2**（groundedness 校验）→ 2. **P0-3 + P0-4**（租户隔离，P0-4 完成后把 citations.source 换成文档名）
-3. **P0-5**（Langfuse 接入）→ 4. **P0-6**（token/成本统计）
+1. **P0-3 + P0-4**（租户隔离，可并行；P0-4 完成后把 citations.source 换成文档名）
+2. **P0-5**（Langfuse 接入）→ 3. **P0-6**（token/成本统计）
 
 ## 开始开发前必做
 
@@ -62,13 +64,15 @@ classify
        -> retrieve_initial
        -> rerank_initial
        -> grade_documents
-            -> answer
+            -> answer -> grounding_check -> (fallback | END)
             -> query_expansion
                  -> retrieve_expanded
                  -> rerank_expanded
                  -> grade_documents
             -> fallback
 ```
+
+> P0-2 已在 answer 末尾加 grounding_check 校验边（任务范围内的图扩展，非 P1-1 ReAct 改造，quick path 结构未破坏）。
 
 ## 关键文件速查
 
