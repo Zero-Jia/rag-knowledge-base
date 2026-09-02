@@ -1,0 +1,73 @@
+# 开发进度日志
+
+> 每个 session 开发结束追加一条记录，**最新在最上面**。
+
+## 记录模板（复制使用）
+
+```
+### Session YYYY-MM-DD
+- **目标**：本 session 要做什么
+- **完成任务**：
+  - [编号] 任务名 — 改动文件
+- **未完成/遗留**：
+  - 原因 + 下次继续点
+- **关键决策**：如果有架构/技术选型决策记录在此
+- **遇到的问题**：踩坑记录，避免下次重复
+- **下一步建议**：下个 session 优先做什么
+```
+
+---
+
+### Session 2026-09-02（P0-1 引用溯源）
+
+- **目标**：完成 P0-1，让 answer_node 输出带 `[1][2]` 引用的答案，并在 state 中维护 `citations` 字段
+- **完成任务**：
+  - [P0-1] answer_node 输出 inline citation 映射 chunk_id — 改动文件：
+    - `app/agent/state.py`：新增 `citations: List[Dict[str, Any]]` 可选字段
+    - `app/agent/nodes/answer_node.py`：新增 `build_citations()`，LLM 返回后解析 `[N]` 标记映射回 context_docs，写入 `state["citations"]`；chat 分支置空列表
+    - `app/agent/nodes/cache_node.py`：精确缓存命中时用缓存 chunks + 缓存答案重建 citations；语义缓存命中置空
+    - `app/services/prompt_builder.py`：context 改为 `[1]...[N]` 编号；system + user prompt 加引用输出要求（中文指令 + few-shot 示例）
+    - `app/services/retrieval_service.py`：metadata 缺 `chunk_id` 时用 Chroma 文档 id 兜底（旧数据 `doc{id}_chunk{i}`，新数据 id 即 chunk_id）
+    - `app/services/hybrid_retrieval.py`：`HYBRID_CACHE_VERSION` 升为 `hybrid_v5_citation_chunk_id`，使旧检索缓存条目（无 chunk_id）失效
+    - `app/services/agent_chat_service.py`：非流式 payload 返回 `citations`（向后兼容）
+    - `app/services/agent_stream_service.py`：SSE `trace` 事件（最后一个数据事件，done 之前）返回 `citations`
+- **未完成/遗留**：
+  - citations.source 暂为 document_id（检索结果无文档名），P0-4 补充文档 metadata 后替换
+  - 3/20 评估 case 答案无引用标记，均为拒答或极短答案场景，属预期行为
+- **关键决策**：
+  - 引用指令放在 `prompt_builder.py` 而非 `prompts.py`：`answer_node` 实际调用的是 `build_messages`，`prompts.py` 只有 classify/rewrite prompt
+  - context 编号用 1-based 顺序编号（非 document_id），保证 LLM 标记与 citations.index 一一对应
+  - 缓存命中也返回 citations：精确缓存 payload 自带 chunks 可重建；语义缓存无 chunks 置空
+  - Chroma `query/get` 的 include 不支持 `"ids"`（会抛 ValueError），但响应默认自带 ids，直接读取即可，vector_store.py 无需改动
+- **遇到的问题**：
+  - Windows 下 PowerShell `>` 重定向原生进程输出会丢内容（仅剩 8 字节），改用 Python subprocess `capture_output=True` 捕获
+  - 环境：项目无独立 venv，实际跑在 conda base（D:\conda）；本次补装了 redis/chromadb/jieba/sentence-transformers/rank-bm25/pypdf/transformers/onnxruntime/mmh3（均为 requirements.txt 已声明依赖）
+  - hybrid 检索有结果缓存，改 chunk_id 字段后必须升 `HYBRID_CACHE_VERSION`，否则命中旧条目拿不到新字段
+- **评估回归**（`scripts/evaluate_agent_day18.py`，涉及 prompt 改动必跑）：
+  - 20 case 全部通过，无 error
+  - avg_answer_correctness 0.9、avg_retrieval_recall@8 0.9、avg_rerank_recall@5 0.8（与改动前基线持平，无回归）
+  - 17/20 case 答案带 `[N]` 引用且 citations 正确生成（含 chunk_id / 原文 / document_id / rerank_score）
+- **下一步建议**：
+  1. 做 P0-2（groundedness 校验），与 P0-1 共用 answer_node 出口
+  2. P0-3/P0-4（租户隔离）可并行，P0-4 完成后把 citations.source 换成文档名
+
+---
+
+### Session 2026-09-02（基线建立）
+
+- **目标**：建立项目开发文档体系，梳理与企业级 Agentic RAG 的差距
+- **完成任务**：
+  - 创建 `/docs` 文件夹与全部 markdown 文档（README / 00-overview / 01-gap-analysis / 02-roadmap / 03-task-backlog / 04-progress-log / 05-agent-handoff / 06-conventions）
+  - 完成差距分析（`01-gap-analysis.md`）：识别 7 大差距，Agent 自主性、引用溯源、多租户为最高优先级
+  - 完成路线图与任务清单（`02-roadmap.md`、`03-task-backlog.md`）：P0/P1/P2/P3 共 23 个任务
+- **未完成/遗留**：本 session 为文档准备阶段，未动代码
+- **关键决策**：
+  - 采用 `/docs` markdown 作为跨 session 记忆库
+  - 后续开发优先走 P0 阶段
+  - `05-agent-handoff.md` 为 Agent 入口文件，第一个读
+  - 任务粒度控制在 1-2 个 session 内可完成
+- **遇到的问题**：无
+- **下一步建议**：
+  1. 从 P0-1（answer_node 引用溯源）开始，它是用户可感知价值最高的任务
+  2. P0-1 完成后顺手做 P0-2（groundedness 校验），二者共用 answer_node 出口
+  3. P0-3/P0-4（租户隔离）可并行推进，不依赖 P0-1/P0-2

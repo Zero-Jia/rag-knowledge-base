@@ -193,6 +193,8 @@ def stream_agent_chat_sse(
                 "fallback_reason": final_state.get("fallback_reason"),
                 "retrieved_docs": final_state.get("retrieved_docs", []),
                 "reranked_docs": final_state.get("reranked_docs", []),
+                # P0-1：流式场景下 citations 随最终 trace 事件返回
+                "citations": final_state.get("citations") or [],
                 "debug_info": build_agent_debug_summary(final_state),
                 "rag_trace": rag_trace,
             },

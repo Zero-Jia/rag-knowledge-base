@@ -35,6 +35,8 @@ class AgentState(TypedDict, total=False):
     retrieval_attempts: List[Dict[str, Any]]
 
     final_answer: Optional[str]
+    # P0-1 新增：答案内联引用溯源 [{index, chunk_id, text, source, score}]
+    citations: List[Dict[str, Any]]
     rag_trace: Dict[str, Any]
 
     need_retry: bool

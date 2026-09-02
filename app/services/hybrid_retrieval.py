@@ -21,7 +21,8 @@ from app.schemas.rag_trace import (
 
 logger = logging.getLogger("rag.perf")
 
-HYBRID_CACHE_VERSION = "hybrid_v4_auto_merge"
+# P0-1：检索结果新增 chunk_id 兜底字段，升版本使旧缓存条目（无 chunk_id）失效
+HYBRID_CACHE_VERSION = "hybrid_v5_citation_chunk_id"
 
 
 def _build_search_cache_key(

@@ -1,5 +1,6 @@
 from typing import Any, Dict
 
+from app.agent.nodes.answer_node import build_citations
 from app.agent.state import AgentState
 from app.agent.tools.cache_tool import (
     lookup_exact_cache,
@@ -62,11 +63,14 @@ def cache_node(state: AgentState) -> AgentState:
         top_k=top_k,
     )
     if exact_cached is not None:
+        cached_answer = exact_cached.get("answer")
         state["cache_hit"] = True
         set_cache_hit(rag_trace, True)
         state["rag_trace"] = rag_trace
-        state["cached_answer"] = exact_cached.get("answer")
-        state["final_answer"] = exact_cached.get("answer")
+        state["cached_answer"] = cached_answer
+        state["final_answer"] = cached_answer
+        # P0-1：精确缓存命中时，用缓存的 chunks + 缓存答案重建 citations（旧缓存无 [N] 标记则降级为空）
+        state["citations"] = build_citations(cached_answer or "", exact_cached.get("chunks") or [])
         debug_info["cache_status"] = "exact_hit"
         state["debug_info"] = debug_info
         return state
@@ -83,6 +87,7 @@ def cache_node(state: AgentState) -> AgentState:
         state["rag_trace"] = rag_trace
         state["cached_answer"] = semantic_cached.get("answer")
         state["final_answer"] = semantic_cached.get("answer")
+        state["citations"] = []  # P0-1：语义缓存不含 chunks，无法重建引用
         debug_info["cache_status"] = "semantic_hit"
         debug_info["semantic_similarity"] = semantic_cached.get("semantic_similarity")
         state["debug_info"] = debug_info
