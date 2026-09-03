@@ -2,7 +2,7 @@
 
 一个基于 **FastAPI + React + ChromaDB + Redis + LangGraph** 的全栈 RAG 知识库系统。
 
-系统支持用户注册登录、上传 PDF/TXT 文档、文档解析与分块、向量化入库、语义检索、混合检索、rerank 重排序、RAG 问答、Agentic RAG 多轮问答、SSE 流式输出、缓存、调试追踪和离线评估。
+系统支持用户注册登录、上传 PDF/TXT 文档、文档解析与分块、向量化入库、语义检索、混合检索、rerank 重排序、RAG 问答、Agentic RAG 多轮问答、SSE 流式输出、多级缓存、Prompt Injection 双向检测、PII 出站脱敏、运行指标监控大盘、调试追踪和离线评估。
 
 ---
 
@@ -53,26 +53,32 @@ Agent 流程由 LangGraph 编排，采用 **quick path + ReAct 双轨并存** �
 
 ```text
 classify（规则脚本 + LLM JSON 输出 route/need_react）
+  │
+  ├─ [P3-2 注入护栏：INJECTION_GUARD_ENABLED=true 时先跑直接注入检测]
+  │     命中 → fallback（诚实拒答，跳过 cache/检索/回答，零 LLM）
+  │
   -> cache
        -> [前置升级：need_react] react_agent ─┐
        -> rewrite                            │
        -> retrieve_initial                   │
        -> rerank_initial                     │
        -> grade_documents                    │
-            -> [后置升级1：证据不足且未升级] ─┤
-            -> answer -> grounding_check     │
-                 -> [后置升级2：grounding 失败且未升级] ─┤
-                 -> END                      │
-            -> query_expansion               │
-                 -> retrieve_expanded        │
-                 -> rerank_expanded          │
-                 -> grade_documents          │
-            -> fallback                      │
-                                             ▼
-                         react_agent（create_react_agent 子图）
-                         自主拆问 / 多轮 4 工具 / 换词 / 多跳收集证据
-                         → 复用 quick path 统一合成答案
-                         -> grounding_check -> (fallback | END)
+       │    └─ [P3-2 间接注入：证据合成前剔除恶意 chunk，全剔除→fallback]
+       -> [后置升级1：证据不足且未升级] ─┤
+       -> answer -> grounding_check     │
+            -> [后置升级2：grounding 失败且未升级] ─┤
+            -> END                      │
+       -> query_expansion               │
+            -> retrieve_expanded        │
+            -> rerank_expanded          │
+            -> grade_documents          │
+       -> fallback                      │
+                                        ▼
+                    react_agent（create_react_agent 子图）
+                    自主拆问 / 多轮 4 工具 / 换词 / 多跳收集证据
+                    （P3-2：工具证据同样做间接注入过滤）
+                    → 复用 quick path 统一合成答案
+                    -> grounding_check -> (fallback | END)
 ```
 
 主要能力：
@@ -82,6 +88,26 @@ classify（规则脚本 + LLM JSON 输出 route/need_react）
 - Quick Path：多轮追问改写、精确缓存与语义缓存、初始检索与 rerank、证据质量判断、Query Expansion / Step-back / HyDE、证据不足时 fallback/refuse
 - Grounding Check：LLM 校验答案是否被证据支持，不通过走 fallback
 - 会话记忆、token 统计、trace/debug 信息、SSE 流式 `deep_research` 过渡事件
+
+### 安全与合规（P3）
+
+- **Prompt Injection 双向检测**（`app/services/injection_guard.py`，规则启发式、零 token）：
+  - **直接注入**：用户 query 中的指令覆盖 / 角色劫持 / system prompt 泄露 / 越狱模式 4 类正则，在 classify 入口短路拦截，直接走 fallback 诚实拒答（跳过 cache/检索/回答，零 LLM 消耗）
+  - **间接注入**：知识库文档中被埋入的恶意指令（面向 AI 的指令覆盖 / 伪系统标记 / 祈使句覆盖 / 诱导泄露），在 grade 与 ReAct 证据合成前剔除恶意 chunk；混入恶意证据时只剔坏片段照常作答，全部被剔除才 fallback
+  - 规则直接拦截从严（歧义词保守放弃以避免误杀正常问题）、间接过滤从宽；英文规则大小写不敏感
+  - 总开关 `INJECTION_GUARD_ENABLED=false`（默认关闭），关闭时全链路零行为；验收脚本 `scripts/evaluate_injection_p3.py`（5 条攻击全拦 + 20 评估问题零误杀）
+- **PII 出站脱敏**（`app/services/pii_mask_service.py`）：
+  - `mask_pii()` 覆盖手机号（`138****5678`）、邮箱（`a***@domain`）、18/15 位身份证（前 3 后 2 掩码）
+  - 出口一：Langfuse trace 上报的 input/output/error 出站掩码（不向第三方泄露原始 PII）
+  - 出口二：后端 error/exception 关键日志掩码
+  - DB 存储不变（chat_messages 原文保留，仅出站掩码）；开关 `PII_MASK_ENABLED=true`（默认开启）
+- JWT 鉴权、user_id 租户隔离（metadata 过滤）、请求级 trace_id、限流中间件、统一错误处理
+
+### 运行监控（Metrics 大盘）
+
+- 每次 Agent 问答结束后异步落库一条 `agent_metrics` 记录（路由、缓存命中、fallback 原因、grade/grounding 结果、token、延迟、ReAct 触发与救援、auto-merge、注入拦截等）
+- 后端聚合接口：`GET /metrics/summary`（总览）、`/metrics/timeseries`（按天趋势）、`/metrics/recent`（最近明细）、`/metrics/react`（ReAct vs quick path 对比）
+- 前端 `Metrics` 页面：汇总卡片（fallback 率 / ReAct 触发率 / grounding 通过率 / 缓存命中率 / Auto-merge 率 / **注入拦截率**）+ 原生 SVG 趋势图，无额外图表依赖
 
 ---
 
@@ -171,6 +197,7 @@ rag-knowledge-base
 │   │   ├── chat_session.py                   # ChatSession / ChatMessage ORM（会话、消息、rag_trace JSON 列）
 │   │   ├── document.py                       # Document ORM
 │   │   ├── document_job.py                   # DocumentJob ORM（文档索引任务，阶段化进度跟踪）
+│   │   ├── metric.py                         # AgentMetric ORM（P1-4：Agent 运行指标落库，供大盘聚合）
 │   │   ├── parent_chunk.py                   # ParentChunk ORM（分层 chunk：L1 父 / L2 子 / L3 叶子）
 │   │   └── user.py                           # User ORM
 │   ├── routers/
@@ -179,6 +206,7 @@ rag-knowledge-base
 │   │   ├── chat.py                           # /chat/*（标准 RAG / Agentic RAG 问答、SSE、会话管理、token 用量）
 │   │   ├── documents.py                      # /documents/*（上传、列表、状态、分块预览、删除）
 │   │   ├── health.py                         # /ping /health 健康检查
+│   │   ├── metrics.py                        # /metrics/*（P1-4：summary / timeseries / recent / react 聚合接口）
 │   │   ├── search.py                         # /search/ 纯向量检索接口
 │   │   ├── search_hybrid.py                  # /search/hybrid/ 混合检索接口
 │   │   ├── search_rerank.py                  # /search/rerank/ 混合 + rerank 检索接口
@@ -188,6 +216,7 @@ rag-knowledge-base
 │   │   ├── agent_chat.py                     # Agent 问答请求/响应 Pydantic 模型
 │   │   ├── chat.py                           # 标准 RAG 问答请求/响应 Pydantic 模型
 │   │   ├── common.py                         # 通用响应包装模型
+│   │   ├── metrics.py                        # P1-4 指标聚合响应模型（summary/timeseries/react）
 │   │   ├── query.py                          # 检索请求 Pydantic 模型
 │   │   ├── rag_trace.py                      # rag_trace schema + record_token_usage / record_timing / set_fallback_reason
 │   │   └── user.py                           # 用户相关 Pydantic 模型
@@ -208,9 +237,12 @@ rag-knowledge-base
 │   │   ├── embedding_service.py              # SentenceTransformer embedding 封装（批处理 + GPU 自动检测）
 │   │   ├── hybrid_retrieval.py               # 混合检索（向量 + BM25 融合），对外暴露 keyword_recall 公共入口
 │   │   ├── indexing_service.py               # 文档索引全流程编排（parse → chunk → embed → write）
+│   │   ├── injection_guard.py                # P3-2：Prompt Injection 双向检测（check_query_injection / filter_evidence_injection，零 token 规则）
 │   │   ├── keyword_search.py                 # BM25 关键词检索底层实现
-│   │   ├── langfuse_service.py               # Langfuse v4 SDK 封装（渐进式开关，默认关闭）
+│   │   ├── langfuse_service.py               # Langfuse v4 SDK 封装（渐进式开关，默认关闭；P3-3 上报内容经 PII 掩码）
 │   │   ├── llm_service.py                    # ChatOpenAI 封装 + generate_answer / generate_answer_with_usage
+│   │   ├── metric_service.py                 # P1-4：agent_metrics 落库 + summary/timeseries/react 聚合查询
+│   │   ├── pii_mask_service.py               # P3-3：mask_pii() 出站脱敏（手机/邮箱/身份证），作用于 Langfuse trace 与后端日志
 │   │   ├── prompt_builder.py                 # 答案合成 prompt 构建（context 编号 [idx]\n{text} + 引用格式指令）
 │   │   ├── query_expansion_service.py        # Step-back / HyDE / 多子问题 Query Expansion
 │   │   ├── rag_retrieval.py                  # RAG 检索便捷入口（内部委托 retrieval / hybrid_retrieval）
@@ -250,12 +282,14 @@ rag-knowledge-base
 │   │   │   ├── chat.js                       # /chat/* 接口（含 agent session token 用量）
 │   │   │   ├── client.js                     # fetch 基础封装（base URL + Authorization 拦截器）
 │   │   │   ├── documents.js                  # /documents/* 接口
+│   │   │   ├── metrics.js                    # /metrics/* 接口（P1-4 监控大盘）
 │   │   │   ├── search.js                     # /search/* 接口
 │   │   │   └── users.js                      # /users/* 接口
 │   │   ├── pages/                            # 页面组件
 │   │   │   ├── Chat.jsx                      # 主问答页面（RAG + Agentic RAG + TracePanel + 👍👎）
 │   │   │   ├── Documents.jsx                 # 文档列表页面
 │   │   │   ├── Login.jsx                     # 登录页面
+│   │   │   ├── Metrics.jsx                   # P1-4 运行监控大盘（汇总卡片 + SVG 趋势图）
 │   │   │   ├── Register.jsx                  # 注册页面
 │   │   │   ├── Search.jsx                    # 检索测试页面
 │   │   │   └── Upload.jsx                    # 文档上传页面
@@ -276,8 +310,11 @@ rag-knowledge-base
 ├── scripts/
 │   ├── __init__.py
 │   ├── evaluate_agent_day18.py               # Agentic RAG 端到端评估脚本（20 case，retrieval / rerank / answer 三维指标）
+│   ├── evaluate_injection_p3.py              # P3 安全验收脚本（注入双向检测 + PII 掩码四段式，零 LLM 段为主）
 │   ├── evaluate_retrieval.py                 # 纯检索接口评估脚本（semantic / hybrid / rerank 对比 Hit@K）
-│   └── reindex_user_metadata.py              # 回填已有 chunk 的 user_id metadata 脚本
+│   ├── reindex_hierarchy_p1_7.py             # P1-7：层级 chunk 重索引（重建 ParentChunk，Small-to-Big 数据补齐）
+│   ├── reindex_user_metadata.py              # 回填已有 chunk 的 user_id metadata 脚本
+│   └── verify_auto_merge_p1_7.py             # P1-7：auto-merge 触发率 / 父块引用 / rerank 提升四段验证
 ├── storage/                                  # ===== 持久化目录（gitignore） =====
 │   ├── uploads/                              # 原始上传文件（PDF / TXT）
 │   ├── chroma/                               # ChromaDB 持久化目录（document_chunks + semantic_cache）
@@ -373,6 +410,11 @@ REACT_AGENT_ENABLED=false
 REACT_RECURSION_LIMIT=25
 REACT_TOOL_TEXT_LIMIT=800
 
+# P3-2：Prompt Injection 检测总开关（默认 False，关闭时 guard 全链路零行为）
+INJECTION_GUARD_ENABLED=false
+# P3-3：PII 出站脱敏总开关（默认 True，仅作用于 Langfuse trace 与后端日志，不改 DB 存储）
+PII_MASK_ENABLED=true
+
 # Redis 缓存
 REDIS_URL=redis://127.0.0.1:6379/0
 REDIS_TTL_SECONDS=3600
@@ -394,6 +436,8 @@ LANGFUSE_SECRET_KEY=
 - Docker Compose 内部可以使用 Redis 服务名，例如 `redis://redis:6379/0`
 - 不要把真实 `OPENAI_API_KEY` 提交到公开仓库
 - `REACT_AGENT_ENABLED=false` 时 Agent 图逐字节走 quick path，不影响现有评估结果
+- `INJECTION_GUARD_ENABLED=false` 时注入检测不生效；演示拦截效果需在 `.env` 设为 `true` 并重启后端（uvicorn 热重载不会重新加载 `.env`）
+- 修改 `.env` 后需重启后端进程才能生效
 
 ---
 
@@ -427,6 +471,7 @@ rag.db
 - `parent_chunks`
 - `chat_sessions`
 - `chat_messages`
+- `agent_metrics`（P1-4：Agent 每次问答的运行指标，供监控大盘聚合；grade 明细存 JSON 列，无额外关联表）
 
 其中 `documents` 表保存上传文件元数据，例如文件名、路径、类型、索引状态。
 
@@ -497,6 +542,31 @@ $env:EVAL_FILE="evaluation/questions_multi_gold.json"
 python scripts/evaluate_agent_day18.py
 ```
 
+> 脚本需以 `PYTHONPATH=.` 方式运行（脚本内无 sys.path 处理），例如：
+> `PYTHONPATH=. python scripts/evaluate_agent_day18.py`（PowerShell：`$env:PYTHONPATH="."`）
+
+### 安全验收（P3）
+
+```bash
+PYTHONPATH=. python scripts/evaluate_injection_p3.py
+```
+
+四段式验证（进程内打开开关，不改 `.env`）：
+
+- **Part A** 纯函数规则：直接注入攻击命中、正常问题与 20 条评估题集零误杀、间接注入证据过滤、PII 掩码
+- **Part B** 直接注入端到端：攻击 query 经 graph 后 `fallback_reason=injection_blocked` 拒答（零 LLM）
+- **Part C** 间接注入节点级：恶意+正常混合证据剔除恶意片段；全部恶意时走 injection_blocked fallback
+- **Part D** PII 掩码：手机/邮箱/身份证掩码正确 + 开关关闭放行
+
+### Auto-merge 验证（P1-7）
+
+```bash
+# 层级 chunk 重索引（为旧文档补齐 ParentChunk 数据，Small-to-Big 前提）
+PYTHONPATH=. python scripts/reindex_hierarchy_p1_7.py
+# 验证 merge 触发率 / 父块引用 / rerank 提升
+PYTHONPATH=. python scripts/verify_auto_merge_p1_7.py
+```
+
 ### 检索接口评估
 
 ```bash
@@ -538,6 +608,10 @@ python scripts/evaluate_retrieval.py
 | GET | `/chat/agent/sessions` | Agent 会话列表 | 是 |
 | GET | `/chat/agent/sessions/{session_id}/messages` | Agent 会话消息 | 是 |
 | GET | `/chat/agent/sessions/{session_id}/usage` | Agent 会话 token 用量（P0-6 新增） | 是 |
+| GET | `/metrics/summary` | 运行指标总览（fallback/ReAct/grounding/缓存/auto-merge/注入拦截率） | 是 |
+| GET | `/metrics/timeseries` | 按天指标趋势 | 是 |
+| GET | `/metrics/recent` | 最近问答指标明细 | 是 |
+| GET | `/metrics/react` | ReAct vs quick path 对比 | 是 |
 
 ---
 
@@ -550,7 +624,8 @@ python scripts/evaluate_retrieval.py
 - `Upload`：上传文档
 - `Documents`：文档列表与状态
 - `Search`：检索测试
-- `Chat`：RAG / Agentic RAG 问答
+- `Chat`：RAG / Agentic RAG 问答（TracePanel + 👍👎 反馈）
+- `Metrics`：运行监控大盘（汇总卡片 + 趋势图，P1-4）
 
 前端默认请求：
 
@@ -584,7 +659,10 @@ VITE_API_BASE_URL=http://localhost:8000
 - Token 统计（rag_trace.token_usage by_node + total）+ Langfuse 可观测性（可选）
 - SSE 流式输出（rag_step / deep_research / content / trace / done）
 - JWT 鉴权、user_id 租户隔离、请求级 trace_id、限流、统一错误处理
-- Precision@K / Recall@K / MRR / Hit@K / 答案正确性评估脚本（Agent 端到端 + 纯检索对比）
+- **Prompt Injection 双向检测**（P3-2）：直接注入 classify 入口短路拒答（零 LLM）+ 间接注入证据合成前剔除，规则启发式零 token、开关默认关闭可灰度
+- **PII 出站脱敏**（P3-3）：Langfuse trace 与后端日志掩码手机/邮箱/身份证，DB 原文保留
+- **运行监控大盘**（P1-4）：agent_metrics 落库 + 4 个聚合接口 + 前端 Metrics 页（fallback/ReAct/grounding/缓存/auto-merge/注入拦截率）
+- Precision@K / Recall@K / MRR / Hit@K / 答案正确性评估脚本（Agent 端到端 + 纯检索对比）+ 注入安全验收脚本（攻击拦截 / 零误杀）
 
 ---
 
