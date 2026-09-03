@@ -32,6 +32,17 @@ class MetricSummary(BaseModel):
     cache_hit_count: int = Field(0, description="缓存命中数")
     cache_hit_rate: float = Field(0.0, description="缓存命中率 (0-1)")
 
+    # P1-7: auto_merge（Small-to-Big）观测
+    auto_merge_requests: int = Field(
+        0, description="检索结果发生过 auto-merge（子块合并回父块）的请求数"
+    )
+    auto_merge_parent_chunks: int = Field(
+        0, description="时间范围内 auto-merge 产生的父块总数"
+    )
+    auto_merge_rate: float = Field(
+        0.0, description="auto-merge 请求占比 (0-1)"
+    )
+
     start: Optional[str] = Field(None, description="查询起始时间 ISO")
     end: Optional[str] = Field(None, description="查询结束时间 ISO")
 

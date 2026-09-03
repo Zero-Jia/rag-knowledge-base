@@ -8,7 +8,7 @@
 
 - 项目已完成 Self-RAG / Corrective RAG 基础能力
 - 文档体系已建立（`/docs`），企业级改造进行中
-- **当前进行阶段：P1 进行中（P1-1、P1-2、P1-3、P1-4 已完成），下一步 P1-5 Celery 异步索引 或 P1-6 前端反馈按钮**
+- **当前进行阶段：P1 阶段收尾完成（P1-1~P1-4、P1-7 已完成；P1-5、P1-6 经评估标记 skip），下一步进入 P2-1 向量库抽象层**
 - P0-1 已完成：answer_node 输出 `[1][2]` inline citation，state 新增 `citations` 字段（index/chunk_id/text/source/score），非流式与 SSE trace 事件均返回；回归通过（20 case，answer_correctness 0.9，17/20 带引用）
 - P0-2 已完成：新增 `grounding_check_node`，answer→grounding_check→(fallback|END)，LLM 判断答案是否被证据支持，不通过走 fallback；chat/cache/无证据场景短路放行，LLM/解析故障保守放行；state 新增 `grounding_passed`/`grounding_reason`；回归通过（20 case，20/20 grounding passed 无误杀，correctness 0.9 持平基线）
 - P0-3 已完成：检索层 user_id 透传 + ChromaDB where 过滤（retrieval_service/hybrid_retrieval/vector_tool/retrieve_node），user_id None 兼容旧数据；评估 user_id=1 correctness 0.9 持平基线
@@ -19,32 +19,36 @@
 - P1-2 已完成：图内新增 `react_agent` 节点（`app/agent/react_agent.py`，invoke `create_react_agent` 子图绑定 4 检索工具），quick path 完整保留；**三层漏斗自动路由**——前置升级（classify：`app/agent/routing.py` 规则脚本 3 条硬信号 + LLM JSON 输出 need_react 软信号，规则优先、保守、闲聊不升级）、后置升级 1（expansion 二轮后 grade 证据不足）、后置升级 2（grounding 失败）；`react_attempted` 护栏保证 ReAct 最多一次，仍失败→fallback（react_no_evidence/react_error 文案）；**ReAct 只负责收集证据（拆问/多轮/换工具/多跳），最终答案复用 quick path 统一合成**（prompt_builder + generate_answer_with_usage），引用 [N] 与证据 index 确定性一致，再过同一 grounding 门控；总开关 `REACT_AGENT_ENABLED=False` 默认关闭（关闭时升级边全部回退、零调用）；SSE 新增 `deep_research` 过渡事件；无 DB schema 变更、无新依赖；开关关闭评估 20/20 持平基线（0.9/0.9/0.8、零升级），开关开启冒烟复合问题 8 轮工具/19 证据/citations 正确/grounding passed、越界问题诚实拒答
 - P1-3 已完成：新增 `app/models/metric.py`（`AgentMetric` 表，一行=一轮 assistant 请求）+ `app/services/metric_service.py`（`persist_agent_metric` 从 agent 最终 state+rag_trace+debug_info 提取 route/cache_hit/need_react/react_attempted/react_reason/react_trigger_reason/react_status/react_tool_rounds/react_evidence_count/evidence_grade/grade_metrics/grounding/need_fallback/fallback_reason/total_latency_ms/node_timings/token_prompt/completion/total 落库）；`save_turn` 改返回 `Optional[ChatMessage]` 向后兼容（调用方接住 id 关联 metric 行）；成功+失败两条路径都写入（失败标 error+need_fallback，无 chat_message_id）；写入异常静默不影响主流程；不存原文答案（PII 考量，原文由 chat_messages 持有）；SQLite 沿用 `Base.metadata.create_all` 自动建表（migration 说明已写 04-progress-log）；不改 graph/prompt/retrieval/quick path；冒烟端到端验证落库正确（route/grade/grounding/latency/token 全字段正确，chat_message_id=18 成功关联）
 - P1-4 已完成：新增 `app/routers/metrics.py`（4 个只读端点 `/metrics/summary`/`/timeseries`/`/recent`/`/react`）+ `app/schemas/metrics.py`（4 个响应模型）+ 扩展 `metric_service.py`（4 个聚合查询函数 `get_metrics_summary`/`get_metrics_timeseries`/`get_recent_metrics`/`get_react_comparison`，DB 层 `func.avg`/`func.count`/`func.date` 聚合，P95 用 Python 简单分位数避免 numpy）；鉴权复用 `get_current_user` 默认按 current_user.id 过滤（租户隔离）；ReAct 对比端点分 react_attempted True/False 两组 + delta；前端新增 `frontend/src/pages/Metrics.jsx`（Summary 卡片网格 + ReAct 对比表 + 每日柱状图原生 CSS 不引入图表库 + 最近 20 条明细表）+ `api/metrics.js` + App.jsx 侧边栏加 metrics 导航；无 DB schema 变更/无 agent/graph/prompt 改动；后端 4 端点路由注册验证通过 + service 层 4 函数冒烟返回正确结构 + 前端 vite build 通过（30 modules）
-- **下一个待办任务：P1-5（Celery 异步索引）或 P1-6（前端反馈按钮，结合 P1-3 metric 行做低分答案定位）**
+- P1-7 已完成（验证先行，实际改动远小于 backlog 预估）：**代码链路验证本来就全通**（quick path 检索层默认 enable_auto_merge=True；ReAct 经 P1-1 工厂复用同一纯函数天然同行为；rerank/grade/citations 字段透传完备；keyword_search 工具为有意不 merge 的设计决策），**真正断点是数据**——现有文档为旧版 non-hierarchy 索引，ParentChunk 表 0 行，merge 触发率 0/20；新增 `scripts/verify_auto_merge_p1_7.py`（四段式验证）+ `scripts/reindex_hierarchy_p1_7.py`（层级重索引，重建 33 文档，doc37 源文件丢失跳过），ParentChunk 0→184 行，merge 触发率 **20/20**，父块 rerank 分数无失真（8.x vs 子块 7.x），citations 正确指向父块，端到端 grounding passed；大盘观测补齐（summary 端点 + 前端 Auto-merge rate 卡片新增 `auto_merge_requests`/`auto_merge_parent_chunks`/`auto_merge_rate`）；无 DB schema 变更/无 prompt 改动；评估回归通过且 rerank 提升（correctness 0.9 持平、recall 0.9 持平、rerank_recall 0.8→0.85）
+- **已知遗留**：ReAct 证据文本截断（`REACT_TOOL_TEXT_LIMIT=800`，merge 后父块最长 4000 字符进最终 prompt 时被截到 800），影响面待量化，可单开任务；`evaluate_agent_day18.py` 需 `PYTHONPATH=.` 方式运行（脚本无 sys.path 处理）
+- **下一个待办任务：P2-1（向量库抽象层，重构 `vector_store.py`，可迁移 Qdrant/Milvus/pgvector）**
 
 ## 下一步优先做什么
 
 按 `03-task-backlog.md` 中状态为 `todo` 的任务，按编号顺序推进。当前推荐起点：
 
-### P1-5：文档索引切到 Celery + Redis broker
+### P2-1：向量库抽象层（迁移到 Qdrant/Milvus/pgvector）
 
-- **位置**：新增 `app/celery_app.py` + tasks 模块
-- **目标**：把文档索引（解析→分块→embedding→入向量库）从同步 HTTP 请求切到 Celery 异步任务队列，支撑大文件并发索引不阻塞 Web 进程
+- **位置**：重构 `app/services/vector_store.py`
+- **目标**：把 ChromaDB 直接调用封装为向量库抽象层，为后续切换 Qdrant/Milvus/pgvector 做准备（企业级选型灵活性 + 面试亮点）
 - **要点**：
-  - 项目已有 Redis（缓存层），可直接复用为 broker
-  - 现有 `document_job` 表已有状态字段，可作为任务追踪载体
-  - 涉及新依赖 `celery`，需先确认 requirements.txt 合理性
-  - 不改 agent/graph/prompt，仅改 indexing 链路入口
+  - 现有调用方：`retrieval_service.py`（search/get_texts）、`indexing_service.py`（add_texts/delete/update_metadatas）、`vector_tool`、`document_delete_service.py`
+  - 建议先定义 `VectorStore` 抽象接口（add/search/delete/update/get），Chroma 作为第一个实现，接口签名保持现有方法兼容
+  - 是否真的迁移到第二实现可评估 ROI；仅做抽象层重构也可作为 P2-1 的最小收尾
+  - 向量库 schema 变更需提供 reindex 脚本（conventions 要求）；现有 `reindex_hierarchy_p1_7.py`/`reindex_user_metadata.py` 可参考
 
-### P1-6：前端答案区 👍/👎 反馈按钮（备选）
+### 已 skip 任务（2026-09-04 评估）
 
-- **位置**：改 `frontend/src/pages/Chat.jsx` + 新增 `app/routers/feedback.py`
-- **目标**：用户对答案点 👍/👎，写入 evaluation 表，结合 P1-3 metric 行做"低分答案"定位
-- **价值**：P1-3 的 metric 表 + 用户反馈 = 在线评估闭环，可定位"grounding passed 但用户不满意"的 case
-- **依赖**：依赖 P1-3 metric 行（已就绪），无阻塞
+- **P1-5（Celery 异步索引）**：秋招项目无大文件并发索引需求，暂不做
+- **P1-6（前端反馈按钮）**：秋招项目无实际用户，反馈回流闭环无数据来源，暂不做
+
+### P1 遗留可选项（非阻塞）
+
+- **ReAct 证据文本截断**：`REACT_TOOL_TEXT_LIMIT=800` vs merge 后父块最长 4000 字符，ReAct 路径答案合成只拿到父块前 800 字符；quantify 影响后可单开小任务（方案：证据收集后按 chunk_id 回查补全文本）
 
 ### 推荐推进顺序
 
-1. **P1-5**（Celery 异步索引）或 **P1-6**（反馈按钮）→ P1 其余任务（P1-7 Small-to-Big）
+1. **P2-1**（向量库抽象层）→ P2-2（多知识库 namespace）→ P2 后续
 
 ## 开始开发前必做
 

@@ -140,6 +140,11 @@ function SummaryCards({ summary }) {
       value: formatPct(summary.grounding_pass_rate),
     },
     { label: "Cache hit rate", value: formatPct(summary.cache_hit_rate) },
+    {
+      label: "Auto-merge rate",
+      value: formatPct(summary.auto_merge_rate),
+      hint: `${summary.auto_merge_requests ?? 0} reqs / ${summary.auto_merge_parent_chunks ?? 0} parents`,
+    },
   ];
   return (
     <div className="summary-grid">

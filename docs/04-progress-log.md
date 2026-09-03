@@ -18,6 +18,56 @@
 
 ---
 
+### Session 2026-09-04（P1-7 auto_merge/Small-to-Big 验证打通 + 观测补齐）
+
+- **目标**：完成 P1-7——验证并打通 agent 链路（quick path + ReAct）的 auto_merge_service（Small-to-Big），补齐大盘观测
+- **完成任务**：
+  - [P1-7] 验证 + 数据修复 + 观测补齐 — 改动文件：
+    - `scripts/verify_auto_merge_p1_7.py`（新增）：四段式验证脚本（数据层/检索层/rerank 层/端到端 citations），Part A-C 零 LLM，Part D 仅 2 case LLM
+    - `scripts/reindex_hierarchy_p1_7.py`（新增）：对 status=DONE 文档重跑 `index_document_pipeline` 重建层级索引（支持 `REINDEX_DOC_IDS` 指定单文档）
+    - `app/services/metric_service.py`：`get_metrics_summary` 新增 auto_merge 聚合（`grade_metrics` JSON 列 Python 层解析，SQLite 不支持 JSON 聚合）
+    - `app/schemas/metrics.py`：`MetricSummary` 新增 3 字段 `auto_merge_requests`/`auto_merge_parent_chunks`/`auto_merge_rate`（向后兼容）
+    - `frontend/src/pages/Metrics.jsx`：SummaryCards 新增 Auto-merge rate 卡片（复用现有样式）
+- **关键发现（验证先行的价值）**：
+  - **代码链路本来就是全通的**：quick path（`hybrid_retrieve` 默认 `enable_auto_merge=True`、`retrieve_chunks` 默认 `auto_merge=True`）、ReAct（P1-1 工厂复用同一纯函数 `hybrid_search_tool`，天然同行为）、rerank/grade/citations 字段透传完备（`grade_documents_node._build_grade_metrics` 已统计 `auto_merged_count`）——backlog 原描述"改 retrieve/answer node"已过时
+  - **真正的断点是数据**：现有 34 文档均为 `HIERARCHICAL_CHUNKING_ENABLED` 生效前用 non-hierarchy 路径索引，`ParentChunk` 表 0 行、向量库 metadata 无层级字段 → merge 触发率 **0/20**（配置开关是开的，但无父块数据可查，`auto_merge_chunks` 空转）
+  - 唯一有意不 merge 的工具：`keyword_search`（docstring 记录的设计决策：精确术语匹配场景合并父块反而稀释精度）
+- **修复与验证结果**：
+  - 重索引 33/34 文档成功（doc37 源文件物理丢失跳过，旧向量未删仍可用；doc5 ECCV PDF 产生 120 父块），`ParentChunk` 0→184 行
+  - merge 触发率 **20/20**；小 txt 文档层级退化（L1≈全文≈L3 文本，无增益也无损失），大文档（PDF）真正受益（L2 父块 1000/2000 字符完整上下文）
+  - rerank 层：父块 cross-encoder 分数普遍高于子块（P:8.x vs c:7.x），无"长文本打分失真被挤掉"问题（98 存活/51 挤出，挤出的多为同文档低分父块）
+  - 端到端：`context_parent_count`=4-5，`grade_auto_merged_count` 正确统计，citations 命中父块（`doc7_l1_0`/`doc10_l1_0`），grounding passed，回答正常
+  - 评估回归（20 case，PYTHONPATH=. 运行）：**通过且 rerank 提升**——answer_correctness 0.9（持平基线）、retrieval_recall 0.9（持平）、rerank_recall **0.8→0.85（+0.05）**，零回退
+- **遇到的问题**：
+  - `evaluate_agent_day18.py` 直接运行报 `ModuleNotFoundError: No module named 'app'`（脚本无 sys.path 处理），需 `PYTHONPATH=.` 或 `python -m` 方式运行——已记入本条，后续 session 注意
+  - Redis 未启动时 search cache 静默降级（warning 刷屏但不阻塞），验证脚本可正常运行
+- **未完成/遗留**：
+  - ReAct 证据文本截断（`REACT_TOOL_TEXT_LIMIT=800`，父块 4000 字符进最终 prompt 时只剩前 800）——量化影响后决定是否单开任务
+  - 前端 Chat 页未展示 auto_merged 标记（可选项，暂不做）
+- **下一步建议**：
+  1. P1 阶段收尾（P1-7 已完成，P1-5/P1-6 skip），进入 P2（向量库抽象层/多知识库 namespace 等，以 backlog P2 列表为准）
+
+---
+
+### Session 2026-09-04（文档维护：P1-5/P1-6 评估 skip + 下一步指向 P1-7）
+
+- **目标**：评估 P1-5（Celery 异步索引）、P1-6（前端反馈按钮）对秋招项目的实际价值，决定是否推进；并校准下一步指向
+- **完成任务**：
+  - [文档] P1-5/P1-6 标记为 `skip` — 改动文件：
+    - `docs/03-task-backlog.md`：状态约定新增 `skip`（=经评估后决定不做，保留记录备后续重启）；P1-5、P1-6 状态 todo→skip，备注列写明不做原因
+    - `docs/05-agent-handoff.md`：当前项目状态段更新（P1-5/P1-6 标 skip）；"下一步优先做什么"重写为指向 P1-7（Small-to-Big），新增"已 skip 任务"小节
+- **关键决策**：
+  - **P1-5 跳过**：秋招项目无大文件并发索引需求，同步索引已够用；引入 Celery 增加部署复杂度（需常驻 worker 进程），ROI 低
+  - **P1-6 跳过**：秋招项目无实际用户，👍/👎 反馈回流闭环无数据来源；P1-3 的 metric 表已提供机器视角指标，离线评估脚本已覆盖质量回归
+  - **P1-7 现状校准**：经核查 `app/services/auto_merge_service.py` + `app/models/parent_chunk.py` 已存在，且 `app/services/retrieval_service.py`/`app/services/hybrid_retrieval.py` 已接入 auto_merge；但 `retrieve_node` 走的是 P1-1 的 `hybrid_search_tool`/`vector_search_tool`，P1-7 真正待办是打通 agent 节点链路对 auto_merge 的透传/引用映射（具体方案待动手时读 tools 确认）
+- **未完成/遗留**：
+  - P1-7 具体实现方案未定（待用户"确认"后读 `app/agent/tools/hybrid_tool.py`/`vector_tool.py` 核实 auto_merge 透传现状再给方案）
+- **下一步建议**：
+  1. P1-7：agent 链路打通 auto_merge_service（Small-to-Big），改 retrieve/answer node
+  2. P1-7 完成后 P1 阶段收尾，进入 P2（向量库抽象层/多知识库 namespace 等）
+
+---
+
 ### Session 2026-09-04（P1-4 监控大盘 API + 前端 Metrics 页）
 
 - **目标**：完成 P1-4 — 把 P1-3 落库的 `agent_metrics` 表通过 4 个聚合查询 API 暴露，并在前端新增 Metrics 页可视化，支撑每日报表与 ReAct vs quick path 效果对比

@@ -230,6 +230,9 @@ def get_metrics_summary(
                 "grounding_pass_rate": 0.0,
                 "cache_hit_count": 0,
                 "cache_hit_rate": 0.0,
+                "auto_merge_requests": 0,
+                "auto_merge_parent_chunks": 0,
+                "auto_merge_rate": 0.0,
                 "start": start,
                 "end": end,
             }
@@ -262,6 +265,18 @@ def get_metrics_summary(
         ]
         p95_latency = _percentile(latency_vals, 0.95)
 
+        # P1-7: auto_merge（Small-to-Big）观测。grade_metrics 为 JSON 列，
+        # SQLite 无法 SQL 层聚合，样本量小，Python 层解析可接受
+        auto_merge_requests = 0
+        auto_merge_parent_chunks = 0
+        for (gm,) in base.with_entities(AgentMetric.grade_metrics).all():
+            if not isinstance(gm, dict):
+                continue
+            merged = _safe_int(gm.get("auto_merged_count")) or 0
+            if merged > 0:
+                auto_merge_requests += 1
+                auto_merge_parent_chunks += merged
+
         def _rate(num: int, den: int) -> float:
             return round(num / den, 4) if den else 0.0
 
@@ -281,6 +296,9 @@ def get_metrics_summary(
             "grounding_pass_rate": _rate(grounding_passed, total),
             "cache_hit_count": cache_hit,
             "cache_hit_rate": _rate(cache_hit, total),
+            "auto_merge_requests": auto_merge_requests,
+            "auto_merge_parent_chunks": auto_merge_parent_chunks,
+            "auto_merge_rate": _rate(auto_merge_requests, total),
             "start": start,
             "end": end,
         }

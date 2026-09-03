@@ -1,6 +1,7 @@
 # 任务清单
 
-> **状态约定**：`todo` / `doing` / `done` / `blocked`
+> **状态约定**：`todo` / `doing` / `done` / `blocked` / `skip`
+> `skip` = 经评估后决定不做（保留记录，备后续按需重启）。
 > 完成任务请填"实际改动文件"列，便于回溯。
 
 ---
@@ -67,9 +68,9 @@ citations: List[Dict[str, Any]]  # [{index: 1, chunk_id: "...", text: "...", sou
 | P1-2 | 引入 ReAct Agent，保留现有图为 quick path | done | `app/agent/react_agent.py`（新增）、`app/agent/routing.py`（新增）、`app/agent/graph.py`、`app/agent/state.py`、`app/agent/prompts.py`、`app/agent/nodes/classify_node.py`、`app/agent/nodes/fallback_node.py`、`app/agent/debug.py`、`app/agent/tools/__init__.py`、`app/agent/tools/_common.py`、`app/agent/tools/hybrid_tool.py`、`app/agent/tools/vector_tool.py`、`app/agent/tools/keyword_tool.py`、`app/agent/tools/rerank_tool.py`、`app/core/config.py`、`app/services/agent_stream_service.py` | 图内加节点方案：三层漏斗路由（规则脚本+LLM 前置保守升级 / expansion 后证据不足升级 / grounding 失败升级），`react_attempted` 护栏保证 ReAct 最多一次，ReAct 证据复用 quick path 统一答案合成（prompt_builder + generate_answer_with_usage）后过同一 grounding 门控；开关 `REACT_AGENT_ENABLED=False` 默认关闭零调用；SSE 发 deep_research 过渡事件；冒烟全过 + 开关关闭评估 20/20 持平基线（0.9/0.9/0.8、零升级） |
 | P1-3 | grade 分数 / fallback 率 / 延迟持久化到 DB | done | `app/models/metric.py`（新增）、`app/models/__init__.py`、`app/main.py`、`app/services/metric_service.py`（新增）、`app/services/chat_session_service.py`、`app/services/agent_memory_service.py`、`app/services/agent_chat_service.py`、`app/services/agent_stream_service.py` | 新增 `AgentMetric` 表（一行=一轮 assistant 请求），从 agent 最终 state+rag_trace+debug_info 提取 route/cache_hit/need_react/react_attempted/react_reason/react_trigger_reason/react_status/react_tool_rounds/react_evidence_count/evidence_grade/grade_metrics/grounding_passed/grounding_reason/need_fallback/fallback_reason/total_latency_ms/node_timings/token_prompt/completion/total 落库；`save_turn` 改返回 `Optional[ChatMessage]` 向后兼容，调用方接住 id 关联 metric 行；成功+失败两条路径都写入（失败标 error + need_fallback，无 chat_message_id）；写入异常静默不影响主流程；不存原文答案（PII 考量，原文由 chat_messages 持有）；SQLite 沿用 `Base.metadata.create_all` 自动建表无 alembic；不改 graph/prompt/retrieval/quick path，评估脚本直接调 graph.invoke 不经改动层，冒烟端到端验证落库正确（route/grade/grounding/latency/token 全字段正确提取） |
 | P1-4 | 监控大盘 API（聚合指标查询） | done | `app/schemas/metrics.py`（新增）、`app/routers/metrics.py`（新增）、`app/services/metric_service.py`、`app/main.py`、`frontend/src/api/metrics.js`（新增）、`frontend/src/pages/Metrics.jsx`（新增）、`frontend/src/App.jsx`、`frontend/src/App.css` | 4 个只读端点（summary/timeseries/recent/react）聚合 `agent_metrics` 表；鉴权复用 `get_current_user` 默认按 current_user.id 过滤（租户隔离）；DB 层用 `func.avg`/`func.count`/`func.date` 聚合；ReAct 对比端点分 react_attempted True/False 两组对比 + delta；P95 用 Python 简单分位数计算（避免引入 numpy）；前端新增 Metrics 页（Summary 卡片网格 + ReAct 对比表 + 每日柱状图 + 最近 20 条明细表），原生 SVG/CSS 不引入图表库；App.jsx 侧边栏加 metrics 导航；不改 agent/graph/prompt/retrieval，无 DB schema 变更，无需评估回归；后端 4 端点路由注册验证通过 + service 层 4 函数冒烟返回正确结构 + 前端 vite build 通过（30 modules） |
-| P1-5 | 文档索引切到 Celery + Redis broker | todo | — | 新增 `celery_app.py` + tasks |
-| P1-6 | 前端答案区加 👍/👎 按钮，写入 evaluation | todo | — | 改 `Chat.jsx` + 新增 `routers/feedback.py` |
-| P1-7 | agent 链路打通 auto_merge_service（Small-to-Big） | todo | — | 改 retrieve/answer node |
+| P1-5 | 文档索引切到 Celery + Redis broker | skip | — | 秋招项目无大文件并发索引需求，暂不做（2026-09-04 评估） |
+| P1-6 | 前端答案区加 👍/👎 按钮，写入 evaluation | skip | — | 秋招项目无实际用户，反馈回流闭环无数据来源，暂不做（2026-09-04 评估） |
+| P1-7 | agent 链路打通 auto_merge_service（Small-to-Big） | done | `scripts/verify_auto_merge_p1_7.py`（新增）、`scripts/reindex_hierarchy_p1_7.py`（新增）、`app/services/metric_service.py`、`app/schemas/metrics.py`、`frontend/src/pages/Metrics.jsx` | 验证先行：发现代码链路全通（hybrid/vector 检索层默认 enable_auto_merge=True、ReAct 工具复用同一纯函数、rerank/grade/citations 字段透传完备），真正断点是数据——现有文档为旧版 non-hierarchy 索引，ParentChunk 表 0 行，merge 触发率 0/20；写层级重索引脚本重建 33 文档（doc37 源文件丢失跳过），ParentChunk 0→184 行，merge 触发率 20/20，父块 rerank 分数无失真（8.x vs 子块 7.x），citations 正确指向父块（doc7_l1_0 等）；大盘观测补齐：summary 端点+前端卡片新增 auto_merge_requests/parent_chunks/rate（grade_metrics JSON Python 层解析）；无 DB schema 变更（ParentChunk 表已存在仅补数据）、无 prompt 改动 |
 
 ---
 
