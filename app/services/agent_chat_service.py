@@ -7,6 +7,7 @@ from app.agent.debug import build_agent_debug_summary, summarize_agent_result_fo
 from app.exceptions import AppError
 from app.services.langfuse_service import report_agent_trace
 from app.services.metric_service import persist_agent_metric
+from app.services.pii_mask_service import mask_pii
 from app.services.request_context import get_request_id
 from app.services.agent_memory_service import (
     get_session_history,
@@ -135,6 +136,8 @@ def agent_chat(
             "cache_hit": result.get("cache_hit", False),
             "need_fallback": result.get("need_fallback", False),
             "fallback_reason": result.get("fallback_reason"),
+            # P3-2：注入拦截标记（前端可据此展示安全提示）
+            "injection_blocked": result.get("injection_blocked", False),
             "debug_info": debug_summary,   # 第17天：返回整理后的版本
             "rag_trace": result.get("rag_trace"),
         }
@@ -219,12 +222,13 @@ def agent_chat(
             error=str(e),
             elapsed_ms=elapsed * 1000.0,
         )
+        # P3-3：错误日志中的异常文本可能夹带用户输入片段，出站掩码
         logger.error(
             "agent_chat fail | rid=%s | user=%s | time=%.3fs | error=%s",
             rid,
             user_id,
             elapsed,
-            e,
+            mask_pii(str(e)),
         )
         raise AppError(
             code="AGENT_CHAT_INTERNAL_ERROR",

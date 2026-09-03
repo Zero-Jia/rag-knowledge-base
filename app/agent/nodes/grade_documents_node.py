@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional
 
 from app.agent.state import AgentState
+from app.core.config import settings
 from app.schemas.rag_trace import set_fallback_reason
+from app.services.injection_guard import filter_evidence_injection
+
+logger = logging.getLogger("rag.agent.grade")
 
 
 def _safe_float(value: Any, default: Optional[float] = None) -> Optional[float]:
@@ -71,6 +76,32 @@ def grade_documents_node(state: AgentState) -> AgentState:
     retrieved_docs: List[Dict[str, Any]] = state.get("retrieved_docs", [])
     reranked_docs: List[Dict[str, Any]] = state.get("reranked_docs", [])
 
+    # P3-2：间接注入扫描 —— guard 开启时在证据进入答案合成 prompt 前剔除
+    # 携带恶意指令的 chunk。过滤发生在 grade 指标计算之前：坏证据不计入
+    # 合格证据数；全部被剔除时以 injection_blocked 走 fallback（ReAct 升级
+    # 护栏照常生效，允许 ReAct 换词/换工具再捞一轮干净证据）。
+    # 开关关闭时本段零行为，quick path 不受影响。
+    evidence_flagged: List[Dict[str, Any]] = []
+    if bool(getattr(settings, "INJECTION_GUARD_ENABLED", False)) and reranked_docs:
+        reranked_docs, evidence_flagged = filter_evidence_injection(reranked_docs)
+        if evidence_flagged:
+            state["reranked_docs"] = reranked_docs
+            metrics_injection = {"injection_filtered_count": len(evidence_flagged)}
+            rag_trace["injection"] = {
+                **(rag_trace.get("injection") or {}),
+                "evidence_flagged": evidence_flagged,
+            }
+            debug_info["injection_filtered_count"] = len(evidence_flagged)
+            logger.warning(
+                "injection guard filtered evidence | count=%s | chunk_ids=%s",
+                len(evidence_flagged),
+                [f.get("chunk_id") for f in evidence_flagged],
+            )
+        else:
+            metrics_injection = {}
+    else:
+        metrics_injection = {}
+
     score_threshold = float(debug_info.get("rerank_score_threshold", 0.1))
     min_reranked_docs = int(debug_info.get("min_reranked_docs", 1))
     expansion_attempted = bool(state.get("expansion_attempted", False))
@@ -80,8 +111,20 @@ def grade_documents_node(state: AgentState) -> AgentState:
         reranked_docs=reranked_docs,
         score_threshold=score_threshold,
     )
-    reason = _grade_reason(metrics, min_reranked_docs=min_reranked_docs)
-    sufficient = reason is None
+    # P3-2：过滤计数并入 grade_metrics（随 JSON 列持久化，供大盘解析）
+    metrics.update(metrics_injection)
+
+    # P3-2：证据被间接注入全部剔除 → 不做 expansion 重试（同样语料只会
+    # 捞回同样的坏证据），直接以 injection_blocked 转 fallback；
+    # route_after_grade_documents 的 ReAct 升级护栏照常生效
+    all_evidence_filtered = bool(evidence_flagged) and not reranked_docs
+
+    if all_evidence_filtered:
+        reason = "injection_blocked"
+        sufficient = False
+    else:
+        reason = _grade_reason(metrics, min_reranked_docs=min_reranked_docs)
+        sufficient = reason is None
 
     stage = "expanded" if expansion_attempted else "initial"
     attempt = {
@@ -115,7 +158,13 @@ def grade_documents_node(state: AgentState) -> AgentState:
         "metrics": metrics,
     }
 
-    if sufficient:
+    if all_evidence_filtered:
+        state["injection_blocked"] = True
+        state["need_query_expansion"] = False
+        state["need_fallback"] = True
+        state["fallback_reason"] = "injection_blocked"
+        set_fallback_reason(rag_trace, "injection_blocked")
+    elif sufficient:
         state["need_query_expansion"] = False
         state["need_fallback"] = False
         state["fallback_reason"] = None

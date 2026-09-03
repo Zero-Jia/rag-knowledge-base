@@ -43,6 +43,17 @@ class MetricSummary(BaseModel):
         0.0, description="auto-merge 请求占比 (0-1)"
     )
 
+    # P3-2: Prompt Injection 观测
+    injection_blocked_count: int = Field(
+        0, description="被注入拦截（fallback_reason=injection_blocked）的请求数"
+    )
+    injection_blocked_rate: float = Field(
+        0.0, description="注入拦截率 (0-1)"
+    )
+    injection_filtered_requests: int = Field(
+        0, description="发生过间接注入证据过滤（未整体拦截）的请求数"
+    )
+
     start: Optional[str] = Field(None, description="查询起始时间 ISO")
     end: Optional[str] = Field(None, description="查询结束时间 ISO")
 

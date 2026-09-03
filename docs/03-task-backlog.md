@@ -78,12 +78,12 @@ citations: List[Dict[str, Any]]  # [{index: 1, chunk_id: "...", text: "...", sou
 
 | 编号 | 任务 | 状态 | 实际改动文件 | 备注 |
 |---|---|---|---|---|
-| P2-1 | 向量库抽象层，迁移到 Qdrant/Milvus/pgvector | todo | — | 重构 `vector_store.py` |
-| P2-2 | 多知识库 namespace（collection per KB） | todo | — | 新增 `models/knowledge_base.py` |
-| P2-3 | RBAC：admin/editor/viewer 角色与权限装饰器 | todo | — | 改 `security.py` + `models/user.py` |
-| P2-4 | CI 评估流水线（GitHub Actions / 本地脚本） | todo | — | 新增 `.github/workflows/eval.yml` |
-| P2-5 | 文档版本管理 + reindex 策略 | todo | — | 改 `document_service.py` |
-| P2-6 | 元数据过滤检索 API | todo | — | 改 `routers/search*.py` |
+| P2-1 | 向量库抽象层，迁移到 Qdrant/Milvus/pgvector | skip | — | 纯重构任务对现有功能零增益（现有 VectorStore 类已是准抽象层，4 个调用方均不直接碰 chromadb）；运行时仍是 Chroma，"可切换"仅为纸面承诺，选型差异可面试口头讲述，暂不做（2026-09-04 评估） |
+| P2-2 | 多知识库 namespace（collection per KB） | skip | — | 单知识库够用，工程量大（DB schema+上传+检索+前端链路全动），暂不做（2026-09-04 评估） |
+| P2-3 | RBAC：admin/editor/viewer 角色与权限装饰器 | skip | — | 通用 Web 权限内容，与 RAG/Agent 专项关联弱，且无实际用户数据支撑，暂不做（2026-09-04 评估） |
+| P2-4 | CI 评估流水线（GitHub Actions / 本地脚本） | skip | — | 评估脚本已本地手动跑通（evaluate_agent_day18.py 回归约定已落地），秋招演示场景 CI 增益有限，暂不做（2026-09-04 评估） |
+| P2-5 | 文档版本管理 + reindex 策略 | skip | — | 完整版本管理过度设计；P1-7 已沉淀层级 reindex 脚本覆盖核心痛点，暂不做（2026-09-04 评估） |
+| P2-6 | 元数据过滤检索 API | skip | — | 底层过滤能力已具备（P0-3 user_id where 过滤同一机制），API 暴露区分度低，暂不做（2026-09-04 评估） |
 
 ---
 
@@ -91,12 +91,12 @@ citations: List[Dict[str, Any]]  # [{index: 1, chunk_id: "...", text: "...", sou
 
 | 编号 | 任务 | 状态 | 实际改动文件 | 备注 |
 |---|---|---|---|---|
-| P3-1 | AB 实验框架（流量分桶） | todo | — | — |
-| P3-2 | Prompt Injection 检测 | todo | — | 新增 guard 服务 |
-| P3-3 | PII 脱敏（日志/trace） | todo | — | — |
-| P3-4 | 多模态检索（表格/图片/代码块） | todo | — | — |
-| P3-5 | 知识图谱增强检索 | todo | — | — |
-| P3-6 | 配置中心 + 特性开关 | todo | — | — |
+| P3-1 | AB 实验框架（流量分桶） | skip | — | 无真实流量，分桶无数据可作用；离线评估脚本（evaluate_agent_day18.py 双配置对比）+ 大盘 ReAct vs quick path 对比端点已是等效替代，暂不做（2026-09-04 评估） |
+| P3-2 | Prompt Injection 检测 | done | `app/services/injection_guard.py`（新增）、`app/core/config.py`、`app/agent/state.py`、`app/schemas/rag_trace.py`、`app/agent/graph.py`、`app/agent/nodes/classify_node.py`、`app/agent/nodes/grade_documents_node.py`、`app/agent/nodes/fallback_node.py`、`app/agent/react_agent.py`、`app/agent/debug.py`、`app/services/metric_service.py`、`app/schemas/metrics.py`、`app/services/langfuse_service.py`、`app/services/agent_chat_service.py`、`app/services/agent_stream_service.py`、`frontend/src/pages/Metrics.jsx`、`scripts/evaluate_injection_p3.py`（新增） | 规则启发式双向检测（零 token）：直接注入在 classify 入口短路（route_after_classify 新增 fallback 边，跳过 cache/检索/回答，零 LLM）；间接注入在 grade 与 ReAct 合成前剔除恶意 chunk（混合剔除/全剔除→injection_blocked fallback）；`INJECTION_GUARD_ENABLED=False` 默认关闭零行为；规则直接拦截从严（目标词限定指令域、"开发者模式"歧义词保守放弃），间接过滤从宽；验收脚本四段全过（5 攻击全拦 + 20 评估集问题零误杀 + 混合/全恶意证据用例 + PII）；回归 20/20 持平基线（0.9/0.9/0.8）；无 DB schema 变更、无 prompt 改动、无新依赖 |
+| P3-3 | PII 脱敏（日志/trace） | done | `app/services/pii_mask_service.py`（新增）、`app/core/config.py`、`app/services/langfuse_service.py`、`app/services/agent_chat_service.py`、`app/services/agent_stream_service.py`、`app/agent/react_agent.py`、`scripts/evaluate_injection_p3.py` | 新增 `mask_pii()`（手机号 138****5678 / 邮箱 a***@domain / 身份证前3后2掩码，`PII_MASK_ENABLED=True` 默认开启，异常保守放行）；出口一：Langfuse trace 上报 input/output/error 出站掩码 + injection metadata/tag（兑现 P0-5 预留钩子）；出口二：agent_chat/stream/react 三处 error 日志掩码；不改 DB 存储（chat_messages 原文保留）；无 DB schema 变更、无新依赖 |
+| P3-4 | 多模态检索（表格/图片/代码块） | skip | — | 工程量最大（换解析管线+新 embedding 模型+chunk schema+前端），现有语料仅 ECCV PDF 有真实收益，暂不做；面试口头讲 ColPali/Vision RAG 思路（2026-09-04 评估） |
+| P3-5 | 知识图谱增强检索 | skip | — | 完整 GraphRAG 全语料实体抽取 token 成本高，且评测集以单跳问题为主收益不显著，暂不做；面试口头讲 GraphRAG 原理+落地设计（2026-09-04 评估） |
+| P3-6 | 配置中心 + 特性开关 | skip | — | 已有 settings + 6 个业务开关且工作正常，无多实例部署场景下"热生效"无真实受益方，通用平台工程非 RAG 专项，暂不做（2026-09-04 评估） |
 
 ---
 

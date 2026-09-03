@@ -49,6 +49,11 @@ def predict_react_upgrade(prev_node: str, state: AgentState) -> bool:
 
 
 def route_after_classify(state: AgentState) -> str:
+    # P3-2：注入拦截短路 —— guard 命中时 classify 已置 need_fallback，
+    # 直接进 fallback 终态拒答（跳过 cache/检索/回答）；开关关闭时
+    # classify 从不提前置 need_fallback，本分支零行为，quick path 不受影响
+    if state.get("need_fallback") is True:
+        return "fallback"
     route = state.get("route", "kb_qa")
     if route == "chat":
         return "answer"
@@ -166,6 +171,8 @@ def build_agent_graph():
         {
             "answer": "answer",
             "cache": "cache",
+            # P3-2：注入拦截短路（guard 命中 → 终态拒答）
+            "fallback": "fallback",
         },
     )
 

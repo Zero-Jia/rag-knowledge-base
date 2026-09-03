@@ -30,7 +30,9 @@ from app.agent.state import AgentState
 from app.agent.tools import build_retrieval_tools
 from app.core.config import settings
 from app.schemas.rag_trace import record_token_usage, record_timing, set_fallback_reason
+from app.services.injection_guard import filter_evidence_injection
 from app.services.llm_service import generate_answer_with_usage
+from app.services.pii_mask_service import mask_pii
 from app.services.prompt_builder import build_messages
 
 logger = logging.getLogger("rag.agent.react")
@@ -199,8 +201,31 @@ def react_agent_node(state: AgentState) -> AgentState:
         loop_prompt_tokens, loop_completion_tokens = _sum_token_usage(out_messages)
         elapsed_ms = (time.time() - start) * 1000.0
 
+        # P3-2：间接注入扫描 —— 工具返回的证据同样可能被埋入恶意指令
+        # （检索内容即输入，ReAct 路径是主要攻击面），进答案合成 prompt 前
+        # 剔除；合成与 citations 均基于过滤后列表，[N] 编号保持一致。
+        # 开关关闭时零行为。
+        react_evidence_flagged: List[Dict[str, Any]] = []
+        if evidence and bool(getattr(settings, "INJECTION_GUARD_ENABLED", False)):
+            evidence, react_evidence_flagged = filter_evidence_injection(evidence)
+            if react_evidence_flagged:
+                rag_trace["injection"] = {
+                    **(rag_trace.get("injection") or {}),
+                    "react_evidence_flagged": react_evidence_flagged,
+                }
+                debug_info["injection_filtered_count"] = len(react_evidence_flagged)
+                logger.warning(
+                    "injection guard filtered react evidence | count=%s | chunk_ids=%s",
+                    len(react_evidence_flagged),
+                    [f.get("chunk_id") for f in react_evidence_flagged],
+                )
+
         if not evidence:
-            # agent 多轮换词/换工具后仍未拿到任何证据（或超步数未产出工具结果）
+            # agent 多轮换词/换工具后仍未拿到任何证据（或超步数未产出工具结果 /
+            # 证据全部被注入过滤剔除）
+            no_evidence_reason = (
+                "injection_blocked" if react_evidence_flagged else "react_no_evidence"
+            )
             rag_trace["react_agent"] = {
                 "trigger_reason": trigger_reason,
                 "tool_rounds": tool_rounds,
@@ -213,7 +238,7 @@ def react_agent_node(state: AgentState) -> AgentState:
             )
             return _finalize_failure(
                 state,
-                reason="react_no_evidence",
+                reason=no_evidence_reason,
                 debug_info=debug_info,
                 rag_trace=rag_trace,
                 elapsed_ms=elapsed_ms,
@@ -306,7 +331,12 @@ def react_agent_node(state: AgentState) -> AgentState:
 
     except Exception as exc:
         elapsed_ms = (time.time() - start) * 1000.0
-        logger.exception("react agent failed | reason=%s | error=%s", trigger_reason, exc)
+        # P3-3：异常日志掩码（异常文本可能夹带工具返回的证据片段）
+        logger.exception(
+            "react agent failed | reason=%s | error=%s",
+            trigger_reason,
+            mask_pii(str(exc)),
+        )
         rag_trace["react_agent"] = {
             "trigger_reason": trigger_reason,
             "status": "error",

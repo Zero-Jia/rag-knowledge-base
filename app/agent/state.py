@@ -55,4 +55,7 @@ class AgentState(TypedDict, total=False):
     need_fallback: bool
     fallback_reason: Optional[str]
 
+    # P3-2 新增：直接注入命中（classify 入口 guard 拦截；命中时 fallback_reason=injection_blocked）
+    injection_blocked: bool
+
     debug_info: Dict[str, Any]

@@ -145,6 +145,11 @@ function SummaryCards({ summary }) {
       value: formatPct(summary.auto_merge_rate),
       hint: `${summary.auto_merge_requests ?? 0} reqs / ${summary.auto_merge_parent_chunks ?? 0} parents`,
     },
+    {
+      label: "Injection blocked",
+      value: formatPct(summary.injection_blocked_rate),
+      hint: `${summary.injection_blocked_count ?? 0} blocked / ${summary.injection_filtered_requests ?? 0} evidence-filtered`,
+    },
   ];
   return (
     <div className="summary-grid">

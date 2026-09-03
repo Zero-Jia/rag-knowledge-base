@@ -10,6 +10,8 @@ Langfuse 上报服务（P0-5）。
    P0-6 加 token/cost 后再细化为 spans/generations。
 4. 不上报原文 chunk 全文，metadata 中只放 rag_trace.timing 等聚合指标，
    避免敏感数据外泄（为未来 PII 脱敏预留空间）。
+5. P3-3：input/output/error 出站前经 mask_pii() 掩码（手机号/邮箱/身份证），
+   仅影响上报内容，DB 中 chat_messages 原文保留。
 """
 from __future__ import annotations
 
@@ -18,6 +20,7 @@ import os
 from typing import Any, Dict, List, Optional
 
 from app.core.config import settings
+from app.services.pii_mask_service import mask_pii
 
 logger = logging.getLogger("rag.langfuse")
 
@@ -100,6 +103,10 @@ def _build_metadata(
         metadata["retrieval_mode"] = rag_trace.get("retrieval_mode")
         metadata["initial_chunks_count"] = len(rag_trace.get("initial_chunks") or [])
         metadata["merged_chunks_count"] = len(rag_trace.get("merged_chunks") or [])
+        # P3-2：注入检测结果（仅规则名/chunk_id，不含原文，可安全上报）
+        injection = rag_trace.get("injection")
+        if isinstance(injection, dict) and injection:
+            metadata["injection"] = injection
 
     return metadata
 
@@ -134,6 +141,12 @@ def report_agent_trace(
         return
 
     try:
+        # P3-3：出站 PII 掩码（手机/邮箱/身份证）。只作用于上报副本，
+        # 调用方 state / DB 中的原文不受影响
+        safe_question = mask_pii(question or "")
+        safe_answer = mask_pii(final_answer or "")
+        safe_error = mask_pii(error) if error else None
+
         metadata = _build_metadata(
             route=route,
             cache_hit=cache_hit,
@@ -147,8 +160,8 @@ def report_agent_trace(
         )
         if elapsed_ms is not None:
             metadata["elapsed_ms"] = elapsed_ms
-        if error is not None:
-            metadata["error"] = error
+        if safe_error is not None:
+            metadata["error"] = safe_error
             metadata["status"] = "error"
         else:
             metadata["status"] = "ok"
@@ -158,14 +171,14 @@ def report_agent_trace(
         # 在 agent_chat/stream service 顶层调用时它就是 root trace。
         span = client.start_observation(
             name=f"{source}",
-            input=question,
+            input=safe_question,
             metadata=metadata,
         )
 
         # 设置 user_id / session_id（用于 Langfuse UI 按用户/会话过滤）
         # v4 SDK 通过 update 接受 user_id/session_id 参数
         span.update(
-            output=final_answer,
+            output=safe_answer,
             user_id=str(user_id) if user_id is not None else None,
             session_id=session_id,
             trace_name=f"{source} | {route or 'unknown'}",
@@ -179,6 +192,8 @@ def report_agent_trace(
             tags.append("cache-hit")
         if need_fallback:
             tags.append("fallback")
+        if fallback_reason == "injection_blocked":
+            tags.append("injection-blocked")
         span.update(tags=tags)
 
         span.end()

@@ -16,6 +16,7 @@ from app.services.agent_memory_service import (
 )
 from app.services.langfuse_service import report_agent_trace
 from app.services.metric_service import persist_agent_metric
+from app.services.pii_mask_service import mask_pii
 from app.services.request_context import get_request_id
 
 logger = logging.getLogger("rag.agent.stream")
@@ -254,6 +255,8 @@ def stream_agent_chat_sse(
                 "need_react": final_state.get("need_react", False),
                 "react_attempted": final_state.get("react_attempted", False),
                 "react_reason": final_state.get("react_reason"),
+                # P3-2：注入拦截结果（fallback 拒答时前端可展示安全提示）
+                "injection_blocked": final_state.get("injection_blocked", False),
                 "debug_info": build_agent_debug_summary(final_state),
                 "rag_trace": rag_trace,
             },
@@ -315,7 +318,13 @@ def stream_agent_chat_sse(
             elapsed_ms=elapsed * 1000.0,
         )
 
-        logger.exception("agent stream failed | rid=%s | user=%s | error=%s", rid, user_id, exc)
+        # P3-3：异常日志掩码（异常文本可能夹带用户输入片段）
+        logger.exception(
+            "agent stream failed | rid=%s | user=%s | error=%s",
+            rid,
+            user_id,
+            mask_pii(str(exc)),
+        )
         yield _sse(
             "error",
             {

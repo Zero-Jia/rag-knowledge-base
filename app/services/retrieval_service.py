@@ -7,6 +7,21 @@ from app.services.auto_merge_service import auto_merge_chunks
 from app.services.embedding_service import EmbeddingService
 from app.services.vector_store import VectorStore
 
+# 稳定性修复：EmbeddingService 进程级单例。
+# SentenceTransformer 加载为重型操作，每次检索都新建实例会重复加载模型
+# （长进程中累计 ~20 次加载后 transformers 可能触发
+#  "Cannot copy out of meta tensor" 加载故障）；与 indexing_service /
+# semantic_cache_service 的 _embedder_singleton、rerank_service 的
+# lru_cache 同款模式，模型与参数完全一致、仅复用实例
+_embedder_singleton: Optional[EmbeddingService] = None
+
+
+def _get_embedder() -> EmbeddingService:
+    global _embedder_singleton
+    if _embedder_singleton is None:
+        _embedder_singleton = EmbeddingService()
+    return _embedder_singleton
+
 def _metadata_to_chunk(
     text: str,
     meta: Optional[Dict[str, Any]],
@@ -49,7 +64,7 @@ def retrieve_chunks(
     auto_merge: bool = True,
     user_id: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
-    embedder = EmbeddingService()
+    embedder = _get_embedder()
     store = VectorStore()
 
     if hasattr(embedder,"embed_query"):

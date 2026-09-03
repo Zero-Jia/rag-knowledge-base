@@ -18,6 +18,8 @@ class RagTrace(TypedDict, total=False):
     cache_hit: bool
     # P0-6：token / 成本统计
     token_usage: Dict[str, Any]
+    # P3-2：注入检测结果（query_blocked/rules/evidence_flagged/react_evidence_flagged）
+    injection: Dict[str, Any]
 
 
 def now_ms() -> float:

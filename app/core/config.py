@@ -105,5 +105,19 @@ class Settings(BaseSettings):
     # ReAct 工具返回 JSON 中片段正文截断长度（quick path 纯函数不受影响）
     REACT_TOOL_TEXT_LIMIT: int = 800
 
+    # =========================
+    # Injection Guard Settings (P3-2)
+    # =========================
+    # 总开关：False 时注入检测零行为（classify/grade/react 链路逐字节走原逻辑，
+    # 与 LANGFUSE_ENABLED / REACT_AGENT_ENABLED 同款灰度/回滚策略）
+    INJECTION_GUARD_ENABLED: bool = False
+
+    # =========================
+    # PII Mask Settings (P3-3)
+    # =========================
+    # 出站掩码总开关：仅作用于 Langfuse trace 与后端关键日志，
+    # 不改 DB 存储（chat_messages 原文保留）
+    PII_MASK_ENABLED: bool = True
+
 
 settings = Settings()

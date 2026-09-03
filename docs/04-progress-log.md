@@ -18,6 +18,103 @@
 
 ---
 
+### Session 2026-09-03（P3-2 + P3-3：Agent 安全与合规加固——Prompt Injection 双向检测 + PII 出站脱敏）
+
+- **目标**：完成 P3 阶段最后两个保留任务——P3-2 Prompt Injection 双向检测（直接注入 + 知识库文档间接注入）+ P3-3 trace/日志 PII 掩码；完成后 P3 收尾，项目进入维护状态
+- **完成任务**：
+  - [P3-2] Prompt Injection 检测 — 改动文件：
+    - `app/services/injection_guard.py`（新增）：规则启发式纯函数（零 token/零延迟），`check_query_injection()` 直接注入 4 条规则（指令覆盖/角色劫持/system prompt 泄露/越狱模式）+ `filter_evidence_injection()` 间接注入 4 条规则（面向 AI 的指令覆盖/伪系统标记/祈使句指令覆盖/诱导泄露），英文规则大小写不敏感
+    - `app/agent/nodes/classify_node.py`：classify 入口直接注入检测，命中即置 `need_fallback` + `fallback_reason=injection_blocked` + `injection_blocked=True`（零 LLM 短路）；`app/agent/graph.py`：`route_after_classify` 新增 fallback 分支
+    - `app/agent/nodes/grade_documents_node.py`：rerank 后、grade 指标计算前过滤恶意 chunk（剔除坏证据不进答案 prompt，[N] 引用编号与过滤后列表一致）；全部被剔除→`injection_blocked` fallback（ReAct 升级护栏照常生效）；`app/agent/react_agent.py`：ReAct 工具证据合成前同款过滤
+    - `app/agent/nodes/fallback_node.py`：新增 `injection_blocked` 诚实拒答文案
+    - `app/agent/state.py`（`injection_blocked`）、`app/schemas/rag_trace.py`（`rag_trace.injection`）、`app/agent/debug.py`（debug summary 暴露拦截/过滤字段）
+    - 观测：`app/services/metric_service.py`（summary 新增 `injection_blocked_count/rate` + `injection_filtered_requests`，meta JSON 记录，无 DB schema 变更）、`app/schemas/metrics.py`（3 字段向后兼容）、`frontend/src/pages/Metrics.jsx`（Injection blocked 卡片）；非流式/流式响应与 SSE trace 事件均透传 `injection_blocked`
+    - 开关：`INJECTION_GUARD_ENABLED=False` 默认关闭，关闭时全链路零行为（与 LANGFUSE/REACT 开关同款灰度策略）
+  - [P3-3] PII 出站脱敏 — 改动文件：
+    - `app/services/pii_mask_service.py`（新增）：`mask_pii()` 覆盖手机号（138****5678 前3后4）/ 邮箱（a***@domain）/ 18/15 位身份证（前3后2），`PII_MASK_ENABLED=True` 默认开启，非字符串/空值/异常保守放行
+    - `app/services/langfuse_service.py`：上报 input/output/error 出站掩码（兑现 P0-5"不上报原文、为 PII 脱敏预留"的钩子），metadata 附带注入检测结果（仅规则名/chunk_id）+ `injection-blocked` tag
+    - 后端关键日志掩码：`agent_chat_service.py`/`agent_stream_service.py`/`react_agent.py` 三处 error/exception 日志的异常文本掩码
+    - DB 存储不变（chat_messages 原文保留，仅出站掩码；metrics 表 metadata_json 无原文）
+  - [修复] embedding 重复加载稳定性问题 — `app/services/retrieval_service.py`：`retrieve_chunks` 每次检索都 `EmbeddingService()` 重复加载 SentenceTransformer，长进程累计约 20 次加载后触发 transformers "Cannot copy out of meta tensor" 故障（回归 case 14-20 全灭）；改为进程级懒加载单例（与 indexing_service / semantic_cache_service 的 `_embedder_singleton`、rerank_service 的 lru_cache 同款），模型与参数不变、仅复用实例
+  - [验收] `scripts/evaluate_injection_p3.py`（新增，四段式）：A 纯函数（5 攻击全命中 + 3 正常问题 + 20 评估集问题零误杀 + 间接过滤 + PII）；B 直接注入端到端（guard 开启下 5/5 graph 拦截 → injection_blocked 拒答）；C 间接注入节点级（恶意+正常混合→恶意剔除 grade sufficient；全恶意→injection_blocked fallback）；D PII 掩码（3 类模式 + 开关关闭放行）——**四段全部 PASS**
+- **关键决策**：
+  - **规则从严 vs 从宽分级**：直接拦截（拒答用户，误杀成本高）目标词限定指令域（指令/提示词/instructions/prompts），刻意放弃高歧义词——"开发者模式"（浏览器/手机正常高频短语）、"设定/规则/限制"（"忽略之前设定的超参数"是 RAG 教学场景正常问题）；间接过滤（仅剔除一条证据，误杀成本低）关键词更宽（含"规则/设定/要求/限制"）
+  - **LLM 复核不做**：规则零 token/零延迟/可单测，且规则未覆盖的攻击下游有 grounding 门控 + 引用溯源兜底；面试故事线上"规则启发式 + 纵深防御"已完整
+  - **间接注入处理选"剔除"而非"整体拒答"**：混入恶意 chunk 时只剔坏证据、好证据照常作答；仅全部证据被剔除才 fallback，且 ReAct 升级护栏允许换工具/换词再捞一轮
+  - **PII 只出站掩码不改存储**：chat_messages 原文保留以便回溯审计；Langfuse（第三方 SaaS）与日志（可能集中采集）是真正外泄面
+- **验证结果**：
+  - 安全验收脚本四段全过：5 条直接注入攻击（中英文：指令覆盖/角色劫持/越狱模式）graph 端到端全部拦截；20 评估集问题 + 正常问题（含"浏览器如何开启开发者模式""忽略之前设定的超参数"等易错句）零误杀；间接注入混合/全恶意两种节点级用例符合预期；PII 三类模式掩码正确
+  - 回归（`PYTHONPATH=. scripts/evaluate_agent_day18.py`，guard/react 均关、quick path 基线配置）：**20/20 case 全通过**，answer_correctness 0.9 / retrieval_recall 0.9 / rerank_recall 0.8 与文档基线完全持平，零误杀零回退；meta tensor 故障随单例修复消失
+  - 前端 `vite build` 通过（30 modules）；后端全量导入（app.main / routers.metrics / langfuse）无环无错
+- **遇到的问题**：
+  - 回归首次运行 case 14-20 全部报 torch meta tensor 错误 → 定位为 embedding 模型重复加载的环境性故障（非本次改动引入，单 case 新进程复现正常），以进程级单例修复
+  - PowerShell 不支持 `&&` 与多行内联 Python 引号转义；评估脚本仍需 `PYTHONPATH=.` 运行（历史遗留，见 P1-7 记录）
+- **未完成/遗留**：
+  - guard 开关默认关闭，演示/生产需在 `.env` 设 `INJECTION_GUARD_ENABLED=true` 并重启后端
+  - 规则库覆盖常见公开攻击句式，绕过手法（同义改写/拆分/多语言）可后续补充；间接注入真实 KB 埋点需人工构造恶意文档，本次以节点级注入模拟验证
+  - logger.exception 的 traceback 正文未掩码（仅 message 部分掩码），如需彻底可加 logging Filter
+- **下一步建议**：
+  1. **P3 收尾，项目进入维护状态**（backlog 终态：9 done + 14 skip，每条 skip 均有书面理由）
+  2. 可选演示准备：`.env` 打开 `INJECTION_GUARD_ENABLED=true`，用"忽略之前所有指令…"现场演示拦截→拒答闭环，Metrics 页看 Injection blocked 卡片
+  3. 维护期小项：ReAct 证据文本截断（REACT_TOOL_TEXT_LIMIT=800，P1 遗留）
+
+---
+
+### Session 2026-09-04（文档维护：P3 取舍评估——推进 P3-2/P3-3，skip 其余四项）
+
+- **目标**：评估 P3 六个任务对秋招项目的价值/成本/面试信号，确定最终推进范围
+- **关键决策**：
+  - **P3-2（Prompt Injection 检测）保留**：项目唯一有真实攻击面的任务（用户 query 直接注入 + 知识库文档间接注入，ReAct 路径工具调用扩大攻击后果）；Agent 安全为面试热点，可现场演示"注入→拦截→fallback 拒答"；接入现有架构成本低（规则启发式为主，拦截走 fallback_node，trace 记 injection_blocked，大盘加拦截率）
+  - **P3-3（PII 脱敏）保留**：兑现 P0-5 Langfuse 接入时预留的"为 PII 脱敏不上报原文"钩子；`mask_pii()` 正则掩码应用出口为 trace + 日志，成本最低；与 P3-2 拼成完整"安全与合规"故事线
+  - **P3-1（AB 实验框架）skip**：无真实流量分桶无数据；离线评估脚本双配置对比 + 大盘 ReAct 对比端点已是等效替代
+  - **P3-4（多模态检索）skip**：工程量最大（解析管线+embedding 模型+chunk schema+前端全动），现有语料仅 ECCV PDF 有真实收益；面试口头讲 ColPali/Vision RAG 思路
+  - **P3-5（知识图谱增强检索）skip**：完整 GraphRAG 全语料实体抽取 token 成本高，评测集以单跳问题为主收益不显著；面试口头讲 GraphRAG 原理+落地设计
+  - **P3-6（配置中心+特性开关）skip**：已有 settings + 6 个业务开关且工作正常，无多实例部署场景热生效无真实受益方
+- **完成任务**：
+  - [文档] P3 取舍结论落文档 — 改动文件：
+    - `docs/03-task-backlog.md`：P3 表 6 任务状态/备注更新（P3-2/P3-3 保持 todo 并标注保留理由，其余 4 项 skip）
+    - `docs/05-agent-handoff.md`：当前阶段说明、下一个待办任务改为 P3-2+P3-3 合并 session、新增两任务实现方案小节、skip 清单补 4 条、推荐推进顺序更新
+- **下一步建议**：
+  1. 开一个 session 完成 P3-2 + P3-3（"Agent 安全与合规加固"）：injection guard（双向检测）+ mask_pii（trace/日志出站掩码）+ 拦截率大盘观测 + 注入测试 case 评估回归
+  2. 完成后 P3 收尾，项目进入维护状态（预期 backlog 终态：9 done + 14 skip）
+
+---
+
+### Session 2026-09-04（文档维护：P2-1 也标记 skip，P2 全阶段收尾）
+
+- **目标**：P2-1（向量库抽象层）经进一步评估后决定也跳过，更新文档指向 P3
+- **关键决策**：
+  - **P2-1 跳过**：读码确认现有 `app/services/vector_store.py` 的 `VectorStore` 类已是"准抽象层"（全项目仅 4 个调用方，均经 `get_store()` 获取，不直接碰 chromadb）；P2-1 本质是纯重构（拆成 接口+Chroma 实现+工厂），对现有功能零增益，运行时仍是 Chroma，"可切换"仅为纸面承诺；向量库选型差异（Qdrant/Milvus/pgvector）作为面试知识点可口头讲述，无需代码佐证
+- **完成任务**：
+  - [文档] P2-1 标记 `skip`，P2 全阶段收尾 — 改动文件：
+    - `docs/03-task-backlog.md`：P2-1 todo→skip（备注写明"准抽象层已存在、纯重构零增益"）
+    - `docs/05-agent-handoff.md`：当前阶段说明改为"P2 全阶段 skip，下一步进入 P3"；删去 P2-1 任务详情小节；已 skip 任务小节补 P2-1；推荐推进顺序改为"P3 取舍评估（先定范围）→ 推进选中任务；若 P3 全 skip 则项目进入维护状态"
+- **未完成/遗留**：
+  - P3 六个任务（AB 实验/Prompt Injection 检测/PII 脱敏/多模态检索/知识图谱/配置中心）尚未做取舍评估，下个 session 先评估再定范围
+- **下一步建议**：
+  1. P3 任务取舍评估（价值/成本/面试信号三维度），选定后再动手
+
+---
+
+### Session 2026-09-04（文档维护：P2 阶段任务取舍评估，仅推进 P2-1）
+
+- **目标**：评估 P2 阶段 6 个任务对秋招项目的实际价值，决定推进范围
+- **关键决策**：
+  - **仅推进 P2-1（向量库抽象层）**：面试点最集中（向量库选型差异 + 依赖倒置/适配器模式落地），且为 P2 正确起点
+  - **P2-2 跳过**：单知识库够用，多 KB 工程量大（DB schema+上传+检索+前端链路全动），ROI 低
+  - **P2-3 跳过**：RBAC 是通用 Web 权限内容，与 RAG/Agent 专项关联弱，且无实际用户数据支撑
+  - **P2-4 跳过**：评估脚本已本地手动跑通（"prompt 改动必跑回归"约定已落地），秋招演示场景 CI 增益有限
+  - **P2-5 跳过**：完整文档版本管理过度设计，P1-7 已沉淀层级 reindex 脚本覆盖核心痛点
+  - **P2-6 跳过**：底层过滤能力已具备（P0-3 user_id where 过滤同一机制），API 暴露区分度低
+- **完成任务**：
+  - [文档] P2-2~P2-6 标记 `skip`、P2-1 备注标注"P2 阶段唯一推进任务" — 改动文件：
+    - `docs/03-task-backlog.md`：P2 表 6 个任务状态/备注更新
+    - `docs/05-agent-handoff.md`：当前阶段说明、已 skip 任务小节（新增 5 条）、推荐推进顺序改为 P2-1 → P3
+- **下一步建议**：
+  1. 开始 P2-1：向量库抽象层（重构 `vector_store.py`，定义 `VectorStore` 抽象接口，Chroma 作为第一实现）；完成后进入 P3（届时再评估 P3 各任务取舍）
+
+---
+
 ### Session 2026-09-04（P1-7 auto_merge/Small-to-Big 验证打通 + 观测补齐）
 
 - **目标**：完成 P1-7——验证并打通 agent 链路（quick path + ReAct）的 auto_merge_service（Small-to-Big），补齐大盘观测

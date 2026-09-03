@@ -57,6 +57,10 @@ def build_agent_debug_summary(result: Dict[str, Any]) -> Dict[str, Any]:
         "react_tool_rounds": raw_debug.get("react_tool_rounds"),
         "react_evidence_count": raw_debug.get("react_evidence_count"),
 
+        # P3-2：Prompt Injection 拦截/过滤
+        "injection_blocked": result.get("injection_blocked"),
+        "injection_filtered_count": raw_debug.get("injection_filtered_count"),
+
         # P0-6：token / 成本统计（从 rag_trace.token_usage.total 提炼）
         "token_total": (result.get("rag_trace") or {}).get("token_usage", {}).get("total"),
 

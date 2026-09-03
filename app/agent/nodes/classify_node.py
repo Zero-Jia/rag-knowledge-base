@@ -1,4 +1,5 @@
 import json
+import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -6,8 +7,11 @@ from app.agent.state import AgentState
 from app.agent.prompts import CLASSIFY_SYSTEM_PROMPT
 from app.agent.routing import detect_complex_query
 from app.core.config import settings
-from app.schemas.rag_trace import record_token_usage
+from app.schemas.rag_trace import record_token_usage, set_fallback_reason
+from app.services.injection_guard import check_query_injection
 from app.services.llm_service import generate_answer_with_usage
+
+logger = logging.getLogger("rag.agent.classify")
 
 
 CHAT_HINTS = [
@@ -127,6 +131,7 @@ def classify_node(state: AgentState) -> AgentState:
     debug_info: Dict[str, Any] = state.get("debug_info", {})
     question = (state.get("question") or "").strip()
     chat_history = state.get("chat_history", [])
+    rag_trace: Dict[str, Any] = state.get("rag_trace", {})
 
     react_enabled = bool(getattr(settings, "REACT_AGENT_ENABLED", False))
 
@@ -137,6 +142,33 @@ def classify_node(state: AgentState) -> AgentState:
         debug_info["classify_status"] = "empty_question"
         state["debug_info"] = debug_info
         return state
+
+    # ===== 1.5 P3-2：直接注入检测（guard 开启时生效）=====
+    # 命中即短路：route 锁定 kb_qa + need_fallback，graph 层
+    # route_after_classify 直接转 fallback 终态拒答（跳过 cache/检索/回答，
+    # 零 LLM 消耗）；开关关闭时本段零行为，quick path 不受影响
+    if bool(getattr(settings, "INJECTION_GUARD_ENABLED", False)):
+        injection_rules = check_query_injection(question)
+        if injection_rules:
+            state["route"] = "kb_qa"
+            state["need_react"] = False
+            state["react_reason"] = None
+            state["need_fallback"] = True
+            state["fallback_reason"] = "injection_blocked"
+            state["injection_blocked"] = True
+            set_fallback_reason(rag_trace, "injection_blocked")
+            rag_trace["injection"] = {"query_blocked": True, "rules": injection_rules}
+            debug_info["classify_status"] = "injection_blocked"
+            debug_info["injection_blocked"] = True
+            debug_info["injection_rules"] = injection_rules
+            state["rag_trace"] = rag_trace
+            state["debug_info"] = debug_info
+            logger.warning(
+                "injection guard blocked query | rules=%s | q_len=%s",
+                injection_rules,
+                len(question),
+            )
+            return state
 
     if _is_chat(question):
         state["route"] = "chat"
@@ -165,7 +197,6 @@ def classify_node(state: AgentState) -> AgentState:
         {"role": "user", "content": user_prompt},
     ]
 
-    rag_trace: Dict[str, Any] = state.get("rag_trace", {})
     classify_start = time.time()
     try:
         llm_output, usage = generate_answer_with_usage(messages, temperature=0.0)

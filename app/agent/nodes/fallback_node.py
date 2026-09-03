@@ -34,6 +34,8 @@ def fallback_node(state: AgentState) -> AgentState:
         # P1-2：ReAct 多轮自主检索后仍无证据 / ReAct 执行异常
         "react_no_evidence": "经过多轮深度检索，知识库中仍未找到足够相关的内容，暂时无法给出可靠答案。你可以换一种更具体的问法，或补充背景信息后再试。",
         "react_error": "深度检索过程中出现异常，暂时无法给出可靠答案。请稍后重试，或换一种问法。",
+        # P3-2：Prompt Injection 拦截（直接注入命中 / 间接注入证据全被剔除）
+        "injection_blocked": "您的请求或检索内容中检测到疑似指令注入（Prompt Injection）行为，已被安全策略拦截，无法继续处理。请调整提问内容后重试。",
         "unknown": "当前知识库证据不足，暂时无法给出可靠答案。",
     }
 
