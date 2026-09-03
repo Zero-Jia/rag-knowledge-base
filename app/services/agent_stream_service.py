@@ -15,6 +15,7 @@ from app.services.agent_memory_service import (
     save_turn,
 )
 from app.services.langfuse_service import report_agent_trace
+from app.services.metric_service import persist_agent_metric
 from app.services.request_context import get_request_id
 
 logger = logging.getLogger("rag.agent.stream")
@@ -178,14 +179,16 @@ def stream_agent_chat_sse(
                 )
 
         final_answer = final_state.get("final_answer") or ""
+        chat_message_id = None
         if final_answer:
-            save_turn(
+            chat_message_row = save_turn(
                 session_id=final_session_id,
                 user_question=q,
                 assistant_answer=final_answer,
                 user_id=user_id,
                 rag_trace=final_state.get("rag_trace"),
             )
+            chat_message_id = getattr(chat_message_row, "id", None) if chat_message_row else None
 
         chunk_size = max(1, int(getattr(settings, "CHAT_STREAM_CHUNK_SIZE", 20)))
         for index in range(0, len(final_answer), chunk_size):
@@ -217,6 +220,16 @@ def stream_agent_chat_sse(
             grounding_reason=final_state.get("grounding_reason"),
             citations=final_state.get("citations") or [],
             rag_trace=rag_trace,
+            source="agent_stream",
+            elapsed_ms=elapsed * 1000.0,
+        )
+
+        # P1-3：持久化 agent 指标（成功路径，异常静默不影响主流程）
+        persist_agent_metric(
+            state=final_state,
+            session_id=final_session_id,
+            user_id=user_id,
+            chat_message_id=chat_message_id,
             source="agent_stream",
             elapsed_ms=elapsed * 1000.0,
         )
@@ -289,6 +302,17 @@ def stream_agent_chat_sse(
             source="agent_stream",
             elapsed_ms=elapsed * 1000.0,
             error=str(exc),
+        )
+        # P1-3：失败路径写一行 metric（标记 error），便于统计失败率；
+        # 失败路径无 chat_message_id（save_turn 未执行）
+        persist_agent_metric(
+            state=final_state,
+            session_id=_sid,
+            user_id=user_id,
+            chat_message_id=None,
+            source="agent_stream",
+            error=str(exc),
+            elapsed_ms=elapsed * 1000.0,
         )
 
         logger.exception("agent stream failed | rid=%s | user=%s | error=%s", rid, user_id, exc)

@@ -132,7 +132,13 @@ def save_turn(
     *,
     user_id: Optional[int] = None,
     rag_trace: Optional[Dict[str, Any]] = None,
-) -> None:
+) -> Optional[ChatMessage]:
+    """
+    Save one user/assistant turn. rag_trace is stored on the assistant message.
+
+    P1-3：返回 assistant 行的 ChatMessage 对象（含 id），供调用方关联 metric 行；
+    向后兼容（之前无返回值）。
+    """
     append_session_message(
         session_id,
         "user",
@@ -140,7 +146,7 @@ def save_turn(
         user_id=user_id,
         metadata={"turn_role": "question"},
     )
-    append_session_message(
+    return append_session_message(
         session_id,
         "assistant",
         assistant_answer,

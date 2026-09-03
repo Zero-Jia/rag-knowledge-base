@@ -10,8 +10,8 @@ from app.error_handlers import register_exception_handlers
 from app.logging_config import setup_logging
 from app.middleware.rate_limit import rate_limit_middleware
 from app.middleware.trace import trace_id_middleware
-from app.models import chat_session, document, document_job, parent_chunk, user
-from app.routers import auth, chat, documents, health, search, search_hybrid, search_rerank, users
+from app.models import chat_session, document, document_job, metric, parent_chunk, user
+from app.routers import auth, chat, documents, health, metrics, search, search_hybrid, search_rerank, users
 from app.services.request_context import set_request_id
 
 setup_logging()
@@ -58,14 +58,6 @@ def custom_openapi():
 
 app.openapi = custom_openapi
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 app.middleware("http")(trace_id_middleware)
 
 api_logger = logging.getLogger("api")
@@ -101,6 +93,16 @@ register_exception_handlers(app)
 
 Base.metadata.create_all(bind=engine)
 
+# CORSMiddleware 必须放在最后（最外层），确保包括限流 429、鉴权 401 在内的
+# 所有响应都带 CORS 头。否则错误响应会被浏览器拦截成 CORS 错误。
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(health.router)
 app.include_router(users.router)
 app.include_router(auth.router)
@@ -109,3 +111,4 @@ app.include_router(search.router)
 app.include_router(chat.router)
 app.include_router(search_hybrid.router)
 app.include_router(search_rerank.router)
+app.include_router(metrics.router)

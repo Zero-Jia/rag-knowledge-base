@@ -6,6 +6,7 @@ from app.agent.graph import agent_graph
 from app.agent.debug import build_agent_debug_summary, summarize_agent_result_for_log
 from app.exceptions import AppError
 from app.services.langfuse_service import report_agent_trace
+from app.services.metric_service import persist_agent_metric
 from app.services.request_context import get_request_id
 from app.services.agent_memory_service import (
     get_session_history,
@@ -100,14 +101,16 @@ def agent_chat(
 
         final_answer = result.get("final_answer") or ""
 
+        chat_message_id = None
         if final_answer:
-            save_turn(
+            chat_message_row = save_turn(
                 session_id=final_session_id,
                 user_question=q,
                 assistant_answer=final_answer,
                 user_id=user_id,
                 rag_trace=result.get("rag_trace"),
             )
+            chat_message_id = getattr(chat_message_row, "id", None) if chat_message_row else None
 
         latest_history = get_session_history(final_session_id, user_id=user_id)
 
@@ -160,6 +163,16 @@ def agent_chat(
             elapsed_ms=elapsed * 1000.0,
         )
 
+        # P1-3：持久化 agent 指标（成功路径，异常静默不影响主流程）
+        persist_agent_metric(
+            state=result,
+            session_id=final_session_id,
+            user_id=user_id,
+            chat_message_id=chat_message_id,
+            source="agent_chat",
+            elapsed_ms=elapsed * 1000.0,
+        )
+
         logger.info(
             "agent_chat done | rid=%s | user=%s | session_id=%s | %s | updated_history_count=%s | time=%.3fs",
             rid,
@@ -194,6 +207,17 @@ def agent_chat(
             source="agent_chat",
             elapsed_ms=elapsed * 1000.0,
             error=str(e),
+        )
+        # P1-3：失败路径同样写一行 metric（标记 error + need_fallback），
+        # 便于统计失败率；失败路径无 chat_message_id（save_turn 未执行）
+        persist_agent_metric(
+            state=state if "state" in locals() else {},
+            session_id=final_session_id if "final_session_id" in locals() else None,
+            user_id=user_id,
+            chat_message_id=None,
+            source="agent_chat",
+            error=str(e),
+            elapsed_ms=elapsed * 1000.0,
         )
         logger.error(
             "agent_chat fail | rid=%s | user=%s | time=%.3fs | error=%s",

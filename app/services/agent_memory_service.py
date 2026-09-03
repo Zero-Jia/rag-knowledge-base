@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from app.models.chat_session import ChatMessage
 from app.services.chat_session_service import (
     MAX_HISTORY_MESSAGES,
     append_session_message as _append_session_message,
@@ -53,11 +54,13 @@ def save_turn(
     *,
     user_id: Optional[int] = None,
     rag_trace: Optional[Dict[str, Any]] = None,
-) -> None:
+) -> Optional[ChatMessage]:
     """
     Save one user/assistant turn. rag_trace is stored on the assistant message.
+
+    P1-3：透传 ChatMessage 返回值，供调用方关联 metric 行。
     """
-    _save_turn(
+    return _save_turn(
         session_id,
         user_question,
         assistant_answer,
