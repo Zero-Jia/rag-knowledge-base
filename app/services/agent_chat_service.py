@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional, List
 from app.agent.graph import agent_graph
 from app.agent.debug import build_agent_debug_summary, summarize_agent_result_for_log
 from app.exceptions import AppError
+from app.services.langfuse_service import report_agent_trace
 from app.services.request_context import get_request_id
 from app.services.agent_memory_service import (
     get_session_history,
@@ -140,6 +141,25 @@ def agent_chat(
             record_timing(payload["rag_trace"], "agent_total_ms", elapsed * 1000.0)
         summary_text = summarize_agent_result_for_log(result)
 
+        # P0-5：上报 Langfuse trace（成功路径）
+        report_agent_trace(
+            trace_id=rid,
+            question=q,
+            final_answer=final_answer,
+            user_id=user_id,
+            session_id=final_session_id,
+            route=result.get("route"),
+            cache_hit=result.get("cache_hit", False),
+            need_fallback=result.get("need_fallback", False),
+            fallback_reason=result.get("fallback_reason"),
+            grounding_passed=result.get("grounding_passed"),
+            grounding_reason=result.get("grounding_reason"),
+            citations=result.get("citations") or [],
+            rag_trace=result.get("rag_trace"),
+            source="agent_chat",
+            elapsed_ms=elapsed * 1000.0,
+        )
+
         logger.info(
             "agent_chat done | rid=%s | user=%s | session_id=%s | %s | updated_history_count=%s | time=%.3fs",
             rid,
@@ -161,6 +181,20 @@ def agent_chat(
         if isinstance(trace, dict):
             set_fallback_reason(trace, str(e))
             record_timing(trace, "agent_total_ms", elapsed * 1000.0)
+        # P0-5：失败路径同样上报 Langfuse，带 error 字段方便 UI 筛选
+        report_agent_trace(
+            trace_id=rid,
+            question=q,
+            final_answer="",
+            user_id=user_id,
+            session_id=final_session_id,
+            need_fallback=True,
+            fallback_reason=str(e),
+            rag_trace=trace,
+            source="agent_chat",
+            elapsed_ms=elapsed * 1000.0,
+            error=str(e),
+        )
         logger.error(
             "agent_chat fail | rid=%s | user=%s | time=%.3fs | error=%s",
             rid,

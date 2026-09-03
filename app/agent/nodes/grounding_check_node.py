@@ -6,8 +6,8 @@ from typing import Any, Dict, List, Optional
 
 from app.agent.prompts import build_grounding_check_messages
 from app.agent.state import AgentState
-from app.schemas.rag_trace import record_timing, set_fallback_reason
-from app.services.llm_service import LLMServiceError, generate_answer
+from app.schemas.rag_trace import record_token_usage, record_timing, set_fallback_reason
+from app.services.llm_service import LLMServiceError, generate_answer_with_usage
 
 logger = logging.getLogger("rag.grounding")
 
@@ -118,10 +118,26 @@ def grounding_check_node(state: AgentState) -> AgentState:
 
     grounding_start = time.time()
     try:
-        raw = generate_answer(messages, temperature=0.0)
-        record_timing(rag_trace, "grounding_check_ms", (time.time() - grounding_start) * 1000.0)
+        raw, usage = generate_answer_with_usage(messages, temperature=0.0)
+        grounding_ms = (time.time() - grounding_start) * 1000.0
+        record_timing(rag_trace, "grounding_check_ms", grounding_ms)
+        record_token_usage(
+            rag_trace,
+            node="grounding_check",
+            prompt_tokens=usage.get("prompt_tokens", 0),
+            completion_tokens=usage.get("completion_tokens", 0),
+            latency_ms=grounding_ms,
+            source="llm",
+        )
     except LLMServiceError as exc:
-        record_timing(rag_trace, "grounding_check_ms", (time.time() - grounding_start) * 1000.0)
+        grounding_ms = (time.time() - grounding_start) * 1000.0
+        record_timing(rag_trace, "grounding_check_ms", grounding_ms)
+        record_token_usage(
+            rag_trace,
+            node="grounding_check",
+            latency_ms=grounding_ms,
+            source="llm_error_pass_through",
+        )
         logger.error("grounding LLM call failed, fallback to pass | error=%s", exc)
         state["grounding_passed"] = True
         state["grounding_reason"] = "llm_error_pass_through"

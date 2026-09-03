@@ -8,7 +8,7 @@ from app.security import get_current_user
 from app.services.chat_service import chat_with_rag, stream_chat_with_rag
 from app.services.agent_chat_service import agent_chat
 from app.services.agent_stream_service import stream_agent_chat_sse
-from app.services.agent_memory_service import get_session_messages, list_chat_sessions
+from app.services.agent_memory_service import get_session_messages, get_session_usage, list_chat_sessions
 from app.services.llm_service import LLMServiceError
 from app.services.request_context import get_request_id
 from app.schemas.common import APIResponse
@@ -262,6 +262,28 @@ def get_agent_chat_session_messages_api(
         include_trace=include_trace,
         limit=limit,
         offset=offset,
+    )
+    return APIResponse(
+        success=True,
+        data=data,
+        error=None,
+        trace_id=getattr(request.state, "trace_id", None),
+    )
+
+
+@router.get(
+    "/agent/sessions/{session_id}/usage",
+    summary="Get aggregated token usage for an agent chat session (P0-6)",
+    response_model=APIResponse,
+)
+def get_agent_chat_session_usage_api(
+    session_id: str,
+    request: Request,
+    current_user=Depends(get_current_user),
+):
+    data = get_session_usage(
+        session_id=session_id,
+        user_id=current_user.id,
     )
     return APIResponse(
         success=True,

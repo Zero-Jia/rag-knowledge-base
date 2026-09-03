@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   getAgentSessionMessages,
+  getSessionUsage,
   listAgentSessions,
   streamAgentChat,
 } from "../api/chat";
@@ -53,8 +54,10 @@ function formatTime(value) {
   return date.toLocaleString();
 }
 
-function TracePanel({ trace }) {
-  if (!trace) {
+function TracePanel({ trace, sessionUsage }) {
+  const hasSessionUsage = sessionUsage && sessionUsage.turn_count > 0;
+
+  if (!trace && !hasSessionUsage) {
     return (
       <div className="trace-empty">
         rag_trace will appear after the agent finishes a turn.
@@ -62,52 +65,98 @@ function TracePanel({ trace }) {
     );
   }
 
-  const initialChunks = trace.initial_chunks || [];
-  const mergedChunks = trace.merged_chunks || [];
-  const timing = trace.timing || {};
+  const initialChunks = trace?.initial_chunks || [];
+  const mergedChunks = trace?.merged_chunks || [];
+  const timing = trace?.timing || {};
+  const tokenUsage = trace?.token_usage || null;
+  const tokenTotal = tokenUsage?.total || null;
+  const byNode = tokenUsage?.by_node || {};
 
   return (
     <div className="trace-panel">
-      <div className="trace-grid">
-        <div className="trace-metric">
-          <span>Mode</span>
-          <strong>{trace.retrieval_mode || "agentic_stream"}</strong>
+      {hasSessionUsage && (
+        <div className="trace-section">
+          <h4>Session total</h4>
+          <div className="trace-kv">
+            <span>Tokens: {sessionUsage.total}</span>
+            <span>
+              In/Out: {sessionUsage.prompt}/{sessionUsage.completion}
+            </span>
+            <span>Turns: {sessionUsage.turn_count}</span>
+          </div>
         </div>
-        <div className="trace-metric">
-          <span>Cache</span>
-          <strong>{trace.cache_hit ? "hit" : "miss"}</strong>
-        </div>
-        <div className="trace-metric">
-          <span>Initial</span>
-          <strong>{initialChunks.length}</strong>
-        </div>
-        <div className="trace-metric">
-          <span>Merged</span>
-          <strong>{mergedChunks.length}</strong>
-        </div>
-      </div>
-
-      {trace.fallback_reason && (
-        <div className="alert error">Fallback: {trace.fallback_reason}</div>
       )}
 
-      <div className="trace-section">
-        <h4>Timing</h4>
-        <div className="trace-kv">
-          {Object.entries(timing).map(([key, value]) => (
-            <span key={key}>
-              {key}: {Number(value).toFixed ? Number(value).toFixed(1) : value}
-              ms
-            </span>
-          ))}
-          {Object.keys(timing).length === 0 && <span>No timing data</span>}
-        </div>
-      </div>
+      {trace && (
+        <>
+          <div className="trace-grid">
+            <div className="trace-metric">
+              <span>Mode</span>
+              <strong>{trace.retrieval_mode || "agentic_stream"}</strong>
+            </div>
+            <div className="trace-metric">
+              <span>Cache</span>
+              <strong>{trace.cache_hit ? "hit" : "miss"}</strong>
+            </div>
+            <div className="trace-metric">
+              <span>Initial</span>
+              <strong>{initialChunks.length}</strong>
+            </div>
+            <div className="trace-metric">
+              <span>Merged</span>
+              <strong>{mergedChunks.length}</strong>
+            </div>
+          </div>
 
-      <details className="raw-trace">
-        <summary>Raw trace JSON</summary>
-        <pre>{JSON.stringify(trace, null, 2)}</pre>
-      </details>
+          {trace.fallback_reason && (
+            <div className="alert error">Fallback: {trace.fallback_reason}</div>
+          )}
+
+          {tokenTotal && (
+            <div className="trace-section">
+              <h4>Token usage (this turn)</h4>
+              <div className="trace-kv">
+                <span>
+                  Total: {tokenTotal.total} ({tokenTotal.prompt}/
+                  {tokenTotal.completion})
+                </span>
+                <span>Model: {tokenUsage.model || "-"}</span>
+              </div>
+              {Object.keys(byNode).length > 0 && (
+                <div className="trace-kv">
+                  {Object.entries(byNode).map(([node, v]) => (
+                    <span key={node}>
+                      {node}: {v.total}
+                      {v.latency_ms
+                        ? ` · ${Number(v.latency_ms).toFixed(0)}ms`
+                        : ""}
+                      {v.source && v.source !== "llm" ? ` · ${v.source}` : ""}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="trace-section">
+            <h4>Timing</h4>
+            <div className="trace-kv">
+              {Object.entries(timing).map(([key, value]) => (
+                <span key={key}>
+                  {key}:{" "}
+                  {Number(value).toFixed ? Number(value).toFixed(1) : value}ms
+                </span>
+              ))}
+              {Object.keys(timing).length === 0 && <span>No timing data</span>}
+            </div>
+          </div>
+
+          <details className="raw-trace">
+            <summary>Raw trace JSON</summary>
+            <pre>{JSON.stringify(trace, null, 2)}</pre>
+          </details>
+        </>
+      )}
     </div>
   );
 }
@@ -121,6 +170,7 @@ export default function Chat() {
   const [loading, setLoading] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [error, setError] = useState("");
+  const [sessionUsage, setSessionUsage] = useState(null);
   const messagesEndRef = useRef(null);
 
   const lastAssistantTrace = useMemo(() => {
@@ -141,8 +191,12 @@ export default function Chat() {
     if (!targetSessionId || loading) return;
     setHistoryLoading(true);
     setError("");
+    setSessionUsage(null);
     try {
-      const rows = await getAgentSessionMessages(targetSessionId, true);
+      const [rows, usage] = await Promise.all([
+        getAgentSessionMessages(targetSessionId, true),
+        getSessionUsage(targetSessionId).catch(() => ({})),
+      ]);
       setSessionId(targetSessionId);
       setActiveTrace(null);
       setMessages(
@@ -155,6 +209,7 @@ export default function Chat() {
           createdAt: row.created_at,
         }))
       );
+      setSessionUsage(usage);
     } catch (err) {
       setError(err?.message || "Failed to load session");
     } finally {
@@ -262,6 +317,10 @@ export default function Chat() {
               ...msg,
               streaming: false,
             }));
+            // P0-6：本轮结束后刷新 session 总 token
+            getSessionUsage(activeSessionId)
+              .then(setSessionUsage)
+              .catch(() => {});
           }
         }
       }
@@ -285,6 +344,7 @@ export default function Chat() {
     setSessionId(newSessionId());
     setMessages([]);
     setActiveTrace(null);
+    setSessionUsage(null);
     setQuestion("");
     setError("");
   }
@@ -418,7 +478,7 @@ export default function Chat() {
             <p className="panel-subtitle">Retrieval and answer telemetry</p>
           </div>
         </div>
-        <TracePanel trace={lastAssistantTrace} />
+        <TracePanel trace={lastAssistantTrace} sessionUsage={sessionUsage} />
       </aside>
     </div>
   );

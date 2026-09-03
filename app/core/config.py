@@ -82,5 +82,16 @@ class Settings(BaseSettings):
     # 是否要求 retrieval_mode 一致才允许命中语义缓存
     SEMANTIC_CACHE_REQUIRE_SAME_MODE: bool = True
 
+    # =========================
+    # Langfuse Settings (P0-5)
+    # =========================
+    # 总开关：False 时所有 langfuse 上报走 no-op，零 SDK 初始化、零网络调用
+    LANGFUSE_ENABLED: bool = False
+    # Langfuse Cloud Hobby 默认 host；自建时改为 http://localhost:3000
+    LANGFUSE_HOST: str = "https://cloud.langfuse.com"
+    # 从 Langfuse Project Settings → API Keys 获取
+    LANGFUSE_PUBLIC_KEY: str = ""
+    LANGFUSE_SECRET_KEY: str = ""
+
 
 settings = Settings()

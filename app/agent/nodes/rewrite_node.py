@@ -1,8 +1,10 @@
+import time
 from typing import Any, Dict, List, Optional
 
 from app.agent.state import AgentState
 from app.agent.prompts import REWRITE_SYSTEM_PROMPT
-from app.services.llm_service import generate_answer
+from app.schemas.rag_trace import record_token_usage
+from app.services.llm_service import generate_answer_with_usage
 
 
 SELF_CONTAINED_QUERY_HINTS = [
@@ -160,8 +162,10 @@ def rewrite_node(state: AgentState) -> AgentState:
         },
     ]
 
+    rag_trace: Dict[str, Any] = state.get("rag_trace", {})
+    rewrite_start = time.time()
     try:
-        rewritten = generate_answer(messages, temperature=0.0)
+        rewritten, usage = generate_answer_with_usage(messages, temperature=0.0)
         rewritten = _clean_rewritten_question(rewritten, question)
 
         # ===== 3. 判断是否真的发生改写 =====
@@ -170,6 +174,15 @@ def rewrite_node(state: AgentState) -> AgentState:
         else:
             debug_info["rewrite_status"] = "llm_rewritten"
 
+        record_token_usage(
+            rag_trace,
+            node="rewrite",
+            prompt_tokens=usage.get("prompt_tokens", 0),
+            completion_tokens=usage.get("completion_tokens", 0),
+            latency_ms=(time.time() - rewrite_start) * 1000.0,
+            source="llm",
+        )
+
         state["rewritten_question"] = rewritten
         debug_info["original_question"] = question
         debug_info["rewritten_question"] = rewritten
@@ -177,15 +190,24 @@ def rewrite_node(state: AgentState) -> AgentState:
         debug_info["rewrite_context_preview"] = history_text[:200]
 
         state["debug_info"] = debug_info
+        state["rag_trace"] = rag_trace
         return state
 
     except Exception as e:
         # ===== 4. 规则兜底 =====
         fallback = _fallback_rule_rewrite(question, chat_history)
 
+        record_token_usage(
+            rag_trace,
+            node="rewrite",
+            latency_ms=(time.time() - rewrite_start) * 1000.0,
+            source="llm_error_rule_fallback",
+        )
+
         state["rewritten_question"] = fallback
         debug_info["rewrite_status"] = "llm_failed_rule_fallback"
         debug_info["rewrite_error"] = str(e)
 
         state["debug_info"] = debug_info
+        state["rag_trace"] = rag_trace
         return state

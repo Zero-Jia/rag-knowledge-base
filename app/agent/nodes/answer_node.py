@@ -4,8 +4,8 @@ from typing import Any, Dict, List
 
 from app.agent.state import AgentState
 from app.agent.tools.cache_tool import save_agent_cache
-from app.schemas.rag_trace import record_timing, set_fallback_reason
-from app.services.llm_service import generate_answer
+from app.schemas.rag_trace import record_token_usage, record_timing, set_fallback_reason
+from app.services.llm_service import generate_answer_with_usage
 from app.services.prompt_builder import build_messages
 
 # P0-1：匹配答案中的引用标记，如 [1]、[2][3]
@@ -81,8 +81,17 @@ def answer_node(state: AgentState) -> AgentState:
             },
         ]
         answer_start = time.time()
-        answer = generate_answer(messages)
-        record_timing(rag_trace, "answer_ms", (time.time() - answer_start) * 1000.0)
+        answer, usage = generate_answer_with_usage(messages)
+        answer_ms = (time.time() - answer_start) * 1000.0
+        record_timing(rag_trace, "answer_ms", answer_ms)
+        record_token_usage(
+            rag_trace,
+            node="answer",
+            prompt_tokens=usage.get("prompt_tokens", 0),
+            completion_tokens=usage.get("completion_tokens", 0),
+            latency_ms=answer_ms,
+            source="llm",
+        )
 
         state["final_answer"] = answer
         state["citations"] = []  # chat 路由无证据引用，保持返回结构一致
@@ -108,8 +117,17 @@ def answer_node(state: AgentState) -> AgentState:
 
     messages = build_messages(question, context_docs)
     answer_start = time.time()
-    answer = generate_answer(messages)
-    record_timing(rag_trace, "answer_ms", (time.time() - answer_start) * 1000.0)
+    answer, usage = generate_answer_with_usage(messages)
+    answer_ms = (time.time() - answer_start) * 1000.0
+    record_timing(rag_trace, "answer_ms", answer_ms)
+    record_token_usage(
+        rag_trace,
+        node="answer",
+        prompt_tokens=usage.get("prompt_tokens", 0),
+        completion_tokens=usage.get("completion_tokens", 0),
+        latency_ms=answer_ms,
+        source="llm",
+    )
 
     state["final_answer"] = answer
     # P0-1：解析 [N] 标记，写入引用溯源

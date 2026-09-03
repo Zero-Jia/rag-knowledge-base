@@ -1,8 +1,10 @@
+import time
 from typing import Any, Dict, List
 
 from app.agent.state import AgentState
 from app.agent.prompts import CLASSIFY_SYSTEM_PROMPT
-from app.services.llm_service import generate_answer
+from app.schemas.rag_trace import record_token_usage
+from app.services.llm_service import generate_answer_with_usage
 
 
 CHAT_HINTS = [
@@ -119,25 +121,46 @@ def classify_node(state: AgentState) -> AgentState:
         {"role": "user", "content": user_prompt},
     ]
 
+    rag_trace: Dict[str, Any] = state.get("rag_trace", {})
+    classify_start = time.time()
     try:
-        llm_output = generate_answer(messages, temperature=0.0)
+        llm_output, usage = generate_answer_with_usage(messages, temperature=0.0)
         label = _clean_label(llm_output)
 
         # ===== 3. 轻量修正（关键）=====
         label = _light_post_fix(label, question, chat_history)
 
+        record_token_usage(
+            rag_trace,
+            node="classify",
+            prompt_tokens=usage.get("prompt_tokens", 0),
+            completion_tokens=usage.get("completion_tokens", 0),
+            latency_ms=(time.time() - classify_start) * 1000.0,
+            source="llm",
+        )
+
         state["route"] = label
         debug_info["classify_status"] = "llm_main"
         debug_info["classify_raw_output"] = llm_output
         state["debug_info"] = debug_info
+        state["rag_trace"] = rag_trace
         return state
 
     except Exception as e:
         # ===== 4. 规则兜底 =====
         label = _rule_fallback(question, chat_history)
 
+        record_token_usage(
+            rag_trace,
+            node="classify",
+            latency_ms=(time.time() - classify_start) * 1000.0,
+            source="llm_error_fallback",
+        )
+
         state["route"] = label
         debug_info["classify_status"] = "llm_failed_fallback"
         debug_info["classify_error"] = str(e)
+
         state["debug_info"] = debug_info
+        state["rag_trace"] = rag_trace
         return state

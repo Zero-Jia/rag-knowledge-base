@@ -14,6 +14,7 @@ from app.services.agent_memory_service import (
     overwrite_session_history,
     save_turn,
 )
+from app.services.langfuse_service import report_agent_trace
 from app.services.request_context import get_request_id
 
 logger = logging.getLogger("rag.agent.stream")
@@ -183,6 +184,25 @@ def stream_agent_chat_sse(
         if isinstance(rag_trace, dict):
             record_timing(rag_trace, "agent_stream_total_ms", elapsed * 1000.0)
 
+        # P0-5：上报 Langfuse trace（成功路径，trace SSE 事件前）
+        report_agent_trace(
+            trace_id=rid,
+            question=q,
+            final_answer=final_answer,
+            user_id=user_id,
+            session_id=final_session_id,
+            route=final_state.get("route"),
+            cache_hit=final_state.get("cache_hit", False),
+            need_fallback=final_state.get("need_fallback", False),
+            fallback_reason=final_state.get("fallback_reason"),
+            grounding_passed=final_state.get("grounding_passed"),
+            grounding_reason=final_state.get("grounding_reason"),
+            citations=final_state.get("citations") or [],
+            rag_trace=rag_trace,
+            source="agent_stream",
+            elapsed_ms=elapsed * 1000.0,
+        )
+
         yield _sse(
             "trace",
             {
@@ -229,6 +249,25 @@ def stream_agent_chat_sse(
         if isinstance(rag_trace, dict):
             set_fallback_reason(rag_trace, str(exc))
             record_timing(rag_trace, "agent_stream_total_ms", elapsed * 1000.0)
+
+        # P0-5：失败路径同样上报 Langfuse
+        # 异常可能发生在 q/final_session_id 赋值前，做兜底防止 NameError
+        locals_ = locals()
+        _q = locals_.get("q", "")
+        _sid = locals_.get("final_session_id")
+        report_agent_trace(
+            trace_id=rid,
+            question=_q,
+            final_answer="",
+            user_id=user_id,
+            session_id=_sid,
+            need_fallback=True,
+            fallback_reason=str(exc),
+            rag_trace=rag_trace,
+            source="agent_stream",
+            elapsed_ms=elapsed * 1000.0,
+            error=str(exc),
+        )
 
         logger.exception("agent stream failed | rid=%s | user=%s | error=%s", rid, user_id, exc)
         yield _sse(

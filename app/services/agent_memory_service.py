@@ -8,6 +8,7 @@ from app.services.chat_session_service import (
     clear_session_history as _clear_session_history,
     get_session_history as _get_session_history,
     get_session_messages,
+    get_session_usage,
     list_chat_sessions,
     overwrite_session_history as _overwrite_session_history,
     save_turn as _save_turn,
@@ -87,4 +88,5 @@ __all__ = [
     "clear_session_history",
     "list_chat_sessions",
     "get_session_messages",
+    "get_session_usage",
 ]

@@ -302,3 +302,65 @@ def get_session_messages(
         }
     finally:
         db.close()
+
+
+def get_session_usage(
+    session_id: str,
+    *,
+    user_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    """
+    P0-6：聚合某 session 所有 assistant 消息的 rag_trace.token_usage.total。
+    返回 {session_id, prompt, completion, total, turn_count}。
+    O(n) 遍历，session 消息量小可接受；无 token_usage 的旧消息跳过。
+    """
+    empty = {
+        "session_id": session_id,
+        "prompt": 0,
+        "completion": 0,
+        "total": 0,
+        "turn_count": 0,
+    }
+    db = SessionLocal()
+    try:
+        session = db.query(ChatSession).filter(ChatSession.session_id == session_id).first()
+        if not session:
+            return empty
+        if user_id is not None and session.user_id not in (None, user_id):
+            return empty
+
+        rows = (
+            db.query(ChatMessage)
+            .filter(
+                ChatMessage.chat_session_id == session.id,
+                ChatMessage.role == "assistant",
+            )
+            .all()
+        )
+
+        prompt = completion = total = 0
+        turn_count = 0
+        for row in rows:
+            trace = row.rag_trace
+            if not isinstance(trace, dict):
+                continue
+            tu = trace.get("token_usage")
+            if not isinstance(tu, dict):
+                continue
+            t = tu.get("total")
+            if not isinstance(t, dict):
+                continue
+            prompt += int(t.get("prompt", 0) or 0)
+            completion += int(t.get("completion", 0) or 0)
+            total += int(t.get("total", 0) or 0)
+            turn_count += 1
+
+        return {
+            "session_id": session_id,
+            "prompt": prompt,
+            "completion": completion,
+            "total": total,
+            "turn_count": turn_count,
+        }
+    finally:
+        db.close()

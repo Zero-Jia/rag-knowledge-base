@@ -4,36 +4,35 @@
 
 ---
 
-## 当前项目状态（最后更新：2026-09-02）
+## 当前项目状态（最后更新：2026-09-03）
 
 - 项目已完成 Self-RAG / Corrective RAG 基础能力
 - 文档体系已建立（`/docs`），企业级改造进行中
-- **当前进行阶段：P0（已完成 P0-1、P0-2、P0-3、P0-4）**
+- **当前进行阶段：P0 已全部完成（P0-1 ~ P0-6），下一步进入 P1（ReAct agent 改造）**
 - P0-1 已完成：answer_node 输出 `[1][2]` inline citation，state 新增 `citations` 字段（index/chunk_id/text/source/score），非流式与 SSE trace 事件均返回；回归通过（20 case，answer_correctness 0.9，17/20 带引用）
 - P0-2 已完成：新增 `grounding_check_node`，answer→grounding_check→(fallback|END)，LLM 判断答案是否被证据支持，不通过走 fallback；chat/cache/无证据场景短路放行，LLM/解析故障保守放行；state 新增 `grounding_passed`/`grounding_reason`；回归通过（20 case，20/20 grounding passed 无误杀，correctness 0.9 持平基线）
 - P0-3 已完成：检索层 user_id 透传 + ChromaDB where 过滤（retrieval_service/hybrid_retrieval/vector_tool/retrieve_node），user_id None 兼容旧数据；评估 user_id=1 correctness 0.9 持平基线
 - P0-4 已完成：indexing non-hierarchy 写 user_id metadata + vector_store update_metadatas + reindex 脚本回填 169 chunks；hierarchy 路径 _base_metadata 已写 user_id；Document model 已有 user_id 无需改
-- **下一个待办任务：P0-5**
+- P0-5 已完成：新增 `app/services/langfuse_service.py` 封装 Langfuse v4 SDK（`get_client()` + `start_observation()`），新增 4 个配置项 `LANGFUSE_ENABLED`/`LANGFUSE_HOST`/`LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`；选 Langfuse Cloud Hobby 部署（非本地自建）；渐进式开关 `LANGFUSE_ENABLED=False` 默认关闭，开关关闭时零 SDK 初始化/零网络调用；agent_chat/stream_service 在 try 末尾成功路径 + except 失败路径各调一次 `report_agent_trace` 上报顶层 Trace；不上报原文 chunk 全文为 PII 脱敏预留；后端 `Application startup complete` 通过；评估回归 20/20 通过，correctness 0.9/rerank_recall 0.8/retrieval_recall 0.9 全持平基线
+- P0-6 已完成：`rag_trace` 新增 `token_usage`（model/total/by_node），新增 `generate_answer_with_usage` 返回 usage；5 个 LLM 节点（classify/rewrite/answer/grounding_check/hyde_expand）调 `record_token_usage` 写 by_node+total；按 user 要求**只统计 token 不算成本**（cost_usd 移除）；新增 `GET /chat/agent/sessions/{id}/usage` session 级聚合；前端 TracePanel 加 Session total + Token usage 区块；零 DB schema 变更（写进现有 rag_trace JSON 列）；评估 20/20 correctness 0.9/recall 0.9/rerank 0.8 持平基线
+- **下一个待办任务：P1-1（P0 阶段已全部完成）**
 
 ## 下一步优先做什么
 
 按 `03-task-backlog.md` 中状态为 `todo` 的任务，按编号顺序推进。当前推荐起点：
 
-### P0-5：接入 Langfuse
+### P1-1：把 retrieve/rerank/keyword/search 改造成 LangGraph Tool
 
-- **位置**：新增 `app/services/langfuse_service.py` + middleware + 各 node trace 注入
-- **目标**：把 `rag_trace` 标准化导出到 Langfuse，支持 trace 可视化与 token/延迟统计
+- **位置**：重构 `app/agent/tools/`
+- **目标**：把检索/重排/关键词检索封装为标准 Tool，为 P1-2 ReAct agent 调用打基础
 - **要点**：
-  - 新增 langfuse_service 封装 Langfuse client + span/trace 上报
-  - agent 执行入口（agent_chat/stream_service）注入 trace
-  - 不涉及 prompt 改动，无需跑评估回归（但需后端能启动）
-  - 需要 Langfuse 公钥/私钥配置（.env）
-- 详细设计见 `03-task-backlog.md` 的"P0-5 详细设计"
+  - 现有 `vector_tool` / `hybrid_tool` / `retrieval_service` / `hybrid_retrieval` 逻辑封装为 Tool 接口（含 user_id 透传 + 租户隔离）
+  - 保留现有 graph 作为 quick path（P1-2 引入 ReAct 时并存）
+  - Tool 化后 P0-6 的 token 统计需兼容（Tool 内部若调 LLM 也要 record_token_usage）
 
 ### 推荐推进顺序
 
-1. **P0-5**（Langfuse 接入）→ 2. **P0-6**（token/成本统计）→ P0 阶段收尾
-3. P0 完成后进入 P1（ReAct agent 改造）
+1. **P1-1**（检索 Tool 化）→ 2. **P1-2**（引入 ReAct agent，保留现有图为 quick path）→ P1 阶段推进
 
 ## 开始开发前必做
 

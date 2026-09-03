@@ -3,6 +3,8 @@ from __future__ import annotations
 import time
 from typing import Any, Dict, List, Optional, TypedDict
 
+from app.core.config import settings
+
 
 class RagTrace(TypedDict, total=False):
     original_query: str
@@ -14,6 +16,8 @@ class RagTrace(TypedDict, total=False):
     timing: Dict[str, float]
     fallback_reason: Optional[str]
     cache_hit: bool
+    # P0-6：token / 成本统计
+    token_usage: Dict[str, Any]
 
 
 def now_ms() -> float:
@@ -22,6 +26,19 @@ def now_ms() -> float:
 
 def elapsed_ms(start_ms: float) -> float:
     return round(now_ms() - start_ms, 3)
+
+
+def _empty_token_total() -> Dict[str, float]:
+    return {"prompt": 0, "completion": 0, "total": 0}
+
+
+def create_token_usage_skeleton() -> Dict[str, Any]:
+    """P0-6：token_usage 骨架，随 rag_trace 一起创建/持久化。"""
+    return {
+        "model": settings.OPENAI_MODEL,
+        "total": _empty_token_total(),
+        "by_node": {},
+    }
 
 
 def create_rag_trace(
@@ -40,6 +57,7 @@ def create_rag_trace(
         "timing": {},
         "fallback_reason": None,
         "cache_hit": cache_hit,
+        "token_usage": create_token_usage_skeleton(),
     }
 
 
@@ -64,6 +82,19 @@ def ensure_rag_trace(
     trace.setdefault("timing", {})
     trace.setdefault("fallback_reason", None)
     trace.setdefault("cache_hit", False)
+    # P0-6：兼容旧 rag_trace（无 token_usage）补骨架
+    if "token_usage" not in trace or not isinstance(trace.get("token_usage"), dict):
+        trace["token_usage"] = create_token_usage_skeleton()
+    else:
+        tu = trace["token_usage"]
+        tu.setdefault("model", settings.OPENAI_MODEL)
+        if not isinstance(tu.get("total"), dict):
+            tu["total"] = _empty_token_total()
+        else:
+            tu["total"].setdefault("prompt", 0)
+            tu["total"].setdefault("completion", 0)
+            tu["total"].setdefault("total", 0)
+        tu.setdefault("by_node", {})
     return trace  # type: ignore[return-value]
 
 
@@ -150,6 +181,63 @@ def record_auto_merge_steps(
 def record_timing(trace: Dict[str, Any], stage: str, ms: float) -> None:
     timing = trace.setdefault("timing", {})
     timing[stage] = round(float(ms), 3)
+
+
+def _ensure_token_usage(trace: Dict[str, Any]) -> Dict[str, Any]:
+    tu = trace.get("token_usage")
+    if not isinstance(tu, dict):
+        tu = create_token_usage_skeleton()
+        trace["token_usage"] = tu
+    else:
+        tu.setdefault("model", settings.OPENAI_MODEL)
+        if not isinstance(tu.get("total"), dict):
+            tu["total"] = _empty_token_total()
+        else:
+            tu["total"].setdefault("prompt", 0)
+            tu["total"].setdefault("completion", 0)
+            tu["total"].setdefault("total", 0)
+        tu.setdefault("by_node", {})
+    return tu
+
+
+def record_token_usage(
+    trace: Dict[str, Any],
+    *,
+    node: str,
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+    latency_ms: Optional[float] = None,
+    source: str = "llm",
+) -> None:
+    """
+    P0-6：记录某节点的 token 消耗，并累加到 total。
+
+    - prompt/completion 为 0 时（cache 命中 / 短路 / 规则兜底）也写入 by_node，
+      方便前端区分"未调用 LLM"与"缺失统计"。
+    - 同一 node 多次调用（如 answer 走 chat 与 kb_qa 互斥，实际不重叠）会覆盖，
+      如需累加请传不同 node 名。
+    """
+    tu = _ensure_token_usage(trace)
+
+    prompt = int(prompt_tokens or 0)
+    completion = int(completion_tokens or 0)
+    total = prompt + completion
+
+    entry: Dict[str, Any] = {
+        "prompt": prompt,
+        "completion": completion,
+        "total": total,
+        "source": source,
+    }
+    if latency_ms is not None:
+        entry["latency_ms"] = round(float(latency_ms), 3)
+
+    tu["by_node"][node] = entry
+
+    agg = tu["total"]
+    agg["prompt"] = int(agg.get("prompt", 0)) + prompt
+    agg["completion"] = int(agg.get("completion", 0)) + completion
+    agg["total"] = int(agg.get("total", 0)) + total
 
 
 def set_cache_hit(trace: Dict[str, Any], cache_hit: bool) -> None:

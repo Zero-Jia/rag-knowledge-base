@@ -48,6 +48,9 @@ def build_agent_debug_summary(result: Dict[str, Any]) -> Dict[str, Any]:
         "grounding_reason": result.get("grounding_reason"),
         "grounding_status": raw_debug.get("grounding_status"),
 
+        # P0-6：token / 成本统计（从 rag_trace.token_usage.total 提炼）
+        "token_total": (result.get("rag_trace") or {}).get("token_usage", {}).get("total"),
+
         # memory / session
         "history_source": raw_debug.get("history_source"),
     }

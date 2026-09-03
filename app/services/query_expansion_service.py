@@ -6,8 +6,8 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
 
 from app.core.config import settings
-from app.schemas.rag_trace import record_timing
-from app.services.llm_service import LLMServiceError, generate_answer
+from app.schemas.rag_trace import record_timing, record_token_usage
+from app.services.llm_service import LLMServiceError, generate_answer_with_usage
 
 
 @dataclass
@@ -194,7 +194,7 @@ def hyde_expand(
     ]
 
     try:
-        generated = generate_answer(
+        generated, usage = generate_answer_with_usage(
             messages,
             temperature=0.1,
             max_retries=1,
@@ -203,10 +203,26 @@ def hyde_expand(
         expanded = generated.strip()
         source = "llm"
         reason = "hyde_generated"
+        if rag_trace is not None:
+            record_token_usage(
+                rag_trace,
+                node="hyde_expand",
+                prompt_tokens=usage.get("prompt_tokens", 0),
+                completion_tokens=usage.get("completion_tokens", 0),
+                latency_ms=(time.time() - start) * 1000.0,
+                source=source,
+            )
     except (LLMServiceError, Exception) as exc:
         expanded = _fallback_hyde(q)
         source = "rule_fallback"
         reason = f"hyde_fallback:{type(exc).__name__}"
+        if rag_trace is not None:
+            record_token_usage(
+                rag_trace,
+                node="hyde_expand",
+                latency_ms=(time.time() - start) * 1000.0,
+                source=source,
+            )
 
     max_chars = int(getattr(settings, "HYDE_MAX_CHARS", 600))
     if max_chars > 0 and len(expanded) > max_chars:

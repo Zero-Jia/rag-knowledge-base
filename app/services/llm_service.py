@@ -1,7 +1,7 @@
 # LLM 服务封装（DeepSeek 版）
 import time
 import logging
-from typing import List,Dict,Optional,Iterator
+from typing import List,Dict,Optional,Iterator,Tuple
 from openai import OpenAI
 from app.services.request_context import get_request_id
 from app.core.config import settings
@@ -26,20 +26,37 @@ def _create_client()->OpenAI:
         raise LLMServiceError("Missing OPENAI_BASE_URL")
     if not model:
         raise LLMServiceError("Missing OPENAI_MODEL")
-    
+
     return OpenAI(
         api_key=api_key,
         base_url=base_url,
     )
 
-def generate_answer(
+def _usage_to_dict(usage) -> Dict[str,int]:
+    """
+    P0-6：把 OpenAI 兼容 response.usage（CompletionUsage）转为 dict。
+    兼容缺失（部分上游可能不返回 usage）。
+    """
+    if usage is None:
+        return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    return {
+        "prompt_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
+        "completion_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
+        "total_tokens": int(getattr(usage, "total_tokens", 0) or 0),
+    }
+
+def generate_answer_with_usage(
         messages:List[Dict[str,str]],
         temperature:float=0.2,
         max_retries:int = settings.MAX_RETRIES,
         timeout:int = settings.TIMEOUT_SECONDS, # 超时参数
-)->str:
+)->Tuple[str, Dict[str,int]]:
     """
-    调用 DeepSeek Chat API 生成回答，非流式调用，返回完整答案（有限重试 + 指数退避 + 超时）
+    P0-6：调用 LLM 并返回 (text, usage_dict)。
+    usage_dict 含 prompt_tokens / completion_tokens / total_tokens。
+    usage 缺失时返回 0（兼容上游不返回 usage 的场景）。
+
+    非流式调用，有限重试 + 指数退避 + 超时。
     """
     rid = get_request_id()
     start = time.time()
@@ -61,6 +78,7 @@ def generate_answer(
     )
 
     last_error:Optional[Exception] = None
+    last_usage: Dict[str,int] = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
     for attempt in range(max_retries+1):
         try:
@@ -74,11 +92,12 @@ def generate_answer(
                 timeout=timeout,
             )
             result = (response.choices[0].message.content or "").strip()
+            last_usage = _usage_to_dict(getattr(response, "usage", None))
             elapsed = time.time() - start
             logger.info(
-                f"LLM call success | rid={rid} | time={elapsed:.2f}s | out_chars={len(result)}"
+                f"LLM call success | rid={rid} | time={elapsed:.2f}s | out_chars={len(result)} | tokens={last_usage}"
             )
-            return result
+            return result, last_usage
         except Exception as e:
             last_error = e
             # 每次失败打一次 error（带 attempt）
@@ -87,9 +106,29 @@ def generate_answer(
                 # 简单指数退避
                 time.sleep(settings.BASE_DELAY * (2**attempt))
                 continue
-    elapsed = time.time() - start  
+    elapsed = time.time() - start
     logger.error(f"LLM final fail | rid={rid} | time={elapsed:.2f}s | error={last_error}")
     raise LLMServiceError(f"DeepSeek API failed after retries: {last_error}")
+
+def generate_answer(
+        messages:List[Dict[str,str]],
+        temperature:float=0.2,
+        max_retries:int = settings.MAX_RETRIES,
+        timeout:int = settings.TIMEOUT_SECONDS, # 超时参数
+)->str:
+    """
+    调用 DeepSeek Chat API 生成回答，非流式调用，返回完整答案（有限重试 + 指数退避 + 超时）
+
+    P0-6：内部委托 generate_answer_with_usage，丢弃 usage 以保持向后兼容。
+    需要 usage 的调用方请直接使用 generate_answer_with_usage。
+    """
+    text, _ = generate_answer_with_usage(
+        messages,
+        temperature=temperature,
+        max_retries=max_retries,
+        timeout=timeout,
+    )
+    return text
 
 def stream_answer(
         messages:List[Dict[str,str]],

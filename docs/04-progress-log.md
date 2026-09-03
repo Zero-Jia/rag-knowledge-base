@@ -18,6 +18,91 @@
 
 ---
 
+### Session 2026-09-03（P0-6 token 消耗统计）
+
+- **目标**：完成 P0-6 — 在 rag_trace 中记录每轮/每节点 token 消耗，前端可展示 session 总 token 与各环节 token；P0 阶段收尾
+- **完成任务**：
+  - [P0-6] token 消耗统计 — 改动文件：
+    - `app/services/llm_service.py`：新增 `generate_answer_with_usage()` 返回 `(text, usage_dict)`，从 OpenAI 兼容 `response.usage` 取 prompt/completion/total tokens；原 `generate_answer()` 改为委托以保持向后兼容
+    - `app/schemas/rag_trace.py`：新增 `record_token_usage(trace, node, prompt_tokens, completion_tokens, latency_ms, source)` 写 `by_node` + 累加 `total`；`create_rag_trace`/`ensure_rag_trace` 初始化 `token_usage` 骨架（model/total/by_node）；按 user 要求**不计算 cost**
+    - `app/core/config.py`：无新增配置（cost 移除后无需 model 价目）
+    - `app/agent/nodes/classify_node.py`、`rewrite_node.py`、`answer_node.py`（chat+kb_qa 两路）、`grounding_check_node.py`：改用 `generate_answer_with_usage`，调 `record_token_usage`；LLM 失败/规则兜底路径记 0 token + source 标记
+    - `app/services/query_expansion_service.py`：`hyde_expand` 同上
+    - `app/agent/debug.py`：`build_agent_debug_summary` 暴露 `token_total`
+    - `app/services/chat_session_service.py`：新增 `get_session_usage(session_id, user_id)` 聚合该 session 所有 assistant 消息 `rag_trace.token_usage.total`（O(n) 遍历）
+    - `app/services/agent_memory_service.py`：re-export `get_session_usage`
+    - `app/routers/chat.py`：新增 `GET /chat/agent/sessions/{session_id}/usage`
+    - `frontend/src/api/chat.js`：新增 `getSessionUsage(sessionId)`
+    - `frontend/src/pages/Chat.jsx`：TracePanel 新增 "Session total" + "Token usage (this turn)" 区块（total + by_node 各环节 token/latency/source）；loadSession 拉取 session 用量；done 事件后刷新
+- **关键决策**：
+  - token 统计放 `rag_trace.token_usage` 而非 AgentState 顶层字段：rag_trace 经 `save_turn` 自动持久化到 `chat_messages.rag_trace` JSON 列，前端 TracePanel 已渲染 rag_trace，零 DB schema 变更；放 state 顶层则需再串到 rag_trace 才能持久化/展示，多此一举
+  - 按 user 要求只统计 token 不算/不输出成本：原 handoff 提的 `cost_usd` 移除，`token_usage.total` 仅 prompt/completion/total
+  - session 级聚合用 Python O(n) 遍历而非 SQL JSON_EXTRACT：session 消息量小可接受，避免 SQLite JSON 函数版本依赖；量大再建冗余表
+  - Langfuse spans/generations 细化留到 P1：避免 P0-6 范围膨胀
+  - 流式 `stream_answer` 不动：agent 链路实际用非流式 `generate_answer`（graph 跑完才切片假流式），token 完整可取
+- **环境**：用户确认运行环境为项目 `.venv`（`C:\Users\HP\Desktop\项目\rag-knowledge-base\.venv\Scripts\python.exe`），非 conda base；后续脚本/评估均用 .venv
+- **验证**：
+  - 全模块 import 通过（.venv python）
+  - 评估回归（`scripts/evaluate_agent_day18.py`，.venv 环境）：20 case 全通过
+    - avg_answer_correctness 0.9（持平基线）
+    - avg_retrieval_recall@8 0.9（持平基线）
+    - avg_rerank_recall 0.8（持平基线）
+    - need_fallback 0（grounding 无误杀）
+  - token_usage 写入由各 LLM 节点 record_token_usage 调用 + 评估跑通无异常间接验证；实际 token 数值需前端实测
+- **未完成/遗留**：
+  - Langfuse 上报细化为 spans/generations（含 token usage）留到 P1
+  - token_usage 实际数值的端到端展示验证需用户启动前后端在前端 TracePanel 实测
+- **下一步建议**：
+  1. P0 阶段已全部完成，进入 P1（ReAct agent 改造）
+  2. P1-1 起步：把 retrieve/rerank/keyword/search 改造成 LangGraph Tool
+
+---
+
+### Session 2026-09-02（P0-5 Langfuse 接入）
+
+- **目标**：完成 P0-5 — 接入 Langfuse Cloud Hobby，把 agent 调用标准化上报为顶层 Trace；采用"代码就绪 + 默认关闭"渐进式方案，开关 `LANGFUSE_ENABLED=False` 时零 SDK 初始化、零网络调用，不阻塞主流程
+- **完成任务**：
+  - [P0-5] Langfuse 接入 — 改动文件：
+    - `requirements.txt`：新增 `langfuse==4.15.1`（v4 SDK，OpenTelemetry-based，API 从 `Langfuse()` 改为 `get_client()`）
+    - `app/core/config.py`：新增 4 个配置项 `LANGFUSE_ENABLED`(默认 False)/`LANGFUSE_HOST`(默认 `https://cloud.langfuse.com`)/`LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`
+    - `app/services/langfuse_service.py`（新增）：
+      - `_get_client()` 懒加载单例，开关关闭或缺 keys 时返回 None
+      - `report_agent_trace(...)` 封装一次顶层 Trace 上报（input=question/output=final_answer/metadata=route+cache+grounding+timing/tags=user_id+session_id+route+cache-hit+fallback）
+      - 内部全 try/except 兜底，任何 Langfuse 错误只 log warning 不影响主流程
+      - 不上报原文 chunk 全文（metadata 只放 timing_ms 和 chunks 计数，为 PII 脱敏预留）
+      - `flush()` 主动 flush，长驻进程可不调
+    - `app/services/agent_chat_service.py`：try 末尾成功路径 + except 失败路径各调一次 `report_agent_trace`
+    - `app/services/agent_stream_service.py`：trace SSE 事件前成功路径 + except 失败路径各调一次（except 路径加 `locals()` 兜底防 NameError）
+- **关键决策**：
+  - 部署形态选 Langfuse Cloud Hobby 而非本地自建：自建需常驻 ClickHouse(~3-4GB)+Postgres+Redis 共 ~6-8GB，与本地开发机已有的 uvicorn+Vite+ChromaDB+embedding 叠加易卡；Hobby 50k units/月对个人项目绰绰有余
+  - 数据治理考量：trace 中带 query/检索原文，未来 P1 PII 脱敏阶段会再加 masking；当前个人学习项目数据未涉真实租户，不构成冲突
+  - 渐进式开关：`LANGFUSE_ENABLED=False` 默认关闭，代码合入主干不影响现有评估基线；用户拿到 Cloud keys 后填 `.env` 并开关切 True 即可激活，零代码改动
+  - 上报粒度 P0-5 只做顶层 Trace：P0-6 加 token/cost 后再细化为 spans/generations
+  - SDK v4 vs v3：v4 是 OpenTelemetry-based，host 环境变量名从 `LANGFUSE_HOST` 改为 `LANGFUSE_BASE_URL`；service 层显式注入 env 避免依赖 .env 自动加载顺序
+- **环境配置**（用户拿到 keys 后填 .env）：
+  ```
+  LANGFUSE_ENABLED=true
+  LANGFUSE_PUBLIC_KEY=pk-lf-xxx
+  LANGFUSE_SECRET_KEY=sk-lf-xxx
+  LANGFUSE_HOST=https://cloud.langfuse.com
+  ```
+- **验证**：
+  - 后端启动正常：`Application startup complete`，import 链路通过（langfuse_service 被两个 service 顺利引入）
+  - no-op 路径 smoke test：`LANGFUSE_ENABLED=False` 时 `_get_client()` 返回 None，`report_agent_trace` 静默返回，无 SDK 初始化/网络调用
+  - 评估回归（`scripts/evaluate_agent_day18.py`，开关默认关闭）：20 case 全通过
+    - avg_answer_correctness 0.9（持平基线）
+    - avg_retrieval_recall@8 0.9（持平基线）
+    - avg_rerank_recall@5 0.8（持平基线）
+    - grounding 20/20 passed，0/20 grounding_failed fallback
+- **未完成/遗留**：
+  - Langfuse 端到端实际验证（开关切 True 后能在 Cloud UI 看到 trace）需用户注册 cloud.langfuse.com 拿 keys 后填 .env 才能验证，本 session 仅代码就绪
+  - token/cost 统计留到 P0-6（state 加 tokens_used/cost_usd/latency_ms 字段并填充，然后 spans 化上报）
+- **下一步建议**：
+  1. P0-6（token/cost 统计）→ P0 阶段收尾
+  2. P0 完成后进入 P1（ReAct agent 改造）
+
+---
+
 ### Session 2026-09-02（P0-3 + P0-4 检索租户隔离）
 
 - **目标**：完成 P0-3（检索 where 过滤）+ P0-4（数据写 user_id metadata）合并闭环

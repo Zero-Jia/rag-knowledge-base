@@ -60,3 +60,11 @@ export async function getAgentSessionMessages(sessionId, includeTrace = true) {
   );
   return Array.isArray(data) ? data : data?.items || [];
 }
+
+export async function getSessionUsage(sessionId) {
+  const data = await apiFetch(
+    `/chat/agent/sessions/${encodeURIComponent(sessionId)}/usage`,
+    { method: "GET" }
+  );
+  return data || {};
+}
