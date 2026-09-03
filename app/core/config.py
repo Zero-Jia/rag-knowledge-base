@@ -58,7 +58,7 @@ class Settings(BaseSettings):
     CHAT_STREAM_CHUNK_SIZE: int = 20
     TEXT_PREVIEW_CHARS: int = 1000
     DOCUMENT_LIST_LIMIT: int = 50
-    RATE_LIMIT_COUNT: int = 5
+    RATE_LIMIT_COUNT: int = 30
     RATE_LIMIT_WINDOW_SECONDS: int = 10
     CHUNK_SIZE_MIN: int = 100
     CHUNK_SIZE_MAX: int = 5000

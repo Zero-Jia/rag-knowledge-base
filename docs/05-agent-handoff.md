@@ -8,33 +8,43 @@
 
 - 项目已完成 Self-RAG / Corrective RAG 基础能力
 - 文档体系已建立（`/docs`），企业级改造进行中
-- **当前进行阶段：P1 进行中（P1-1、P1-2 已完成），下一步 P1-3 指标持久化（grade 分数 / fallback 率 / react 触发率 / 延迟落 DB）**
+- **当前进行阶段：P1 进行中（P1-1、P1-2、P1-3、P1-4 已完成），下一步 P1-5 Celery 异步索引 或 P1-6 前端反馈按钮**
 - P0-1 已完成：answer_node 输出 `[1][2]` inline citation，state 新增 `citations` 字段（index/chunk_id/text/source/score），非流式与 SSE trace 事件均返回；回归通过（20 case，answer_correctness 0.9，17/20 带引用）
 - P0-2 已完成：新增 `grounding_check_node`，answer→grounding_check→(fallback|END)，LLM 判断答案是否被证据支持，不通过走 fallback；chat/cache/无证据场景短路放行，LLM/解析故障保守放行；state 新增 `grounding_passed`/`grounding_reason`；回归通过（20 case，20/20 grounding passed 无误杀，correctness 0.9 持平基线）
 - P0-3 已完成：检索层 user_id 透传 + ChromaDB where 过滤（retrieval_service/hybrid_retrieval/vector_tool/retrieve_node），user_id None 兼容旧数据；评估 user_id=1 correctness 0.9 持平基线
 - P0-4 已完成：indexing non-hierarchy 写 user_id metadata + vector_store update_metadatas + reindex 脚本回填 169 chunks；hierarchy 路径 _base_metadata 已写 user_id；Document model 已有 user_id 无需改
 - P0-5 已完成：新增 `app/services/langfuse_service.py` 封装 Langfuse v4 SDK（`get_client()` + `start_observation()`），新增 4 个配置项 `LANGFUSE_ENABLED`/`LANGFUSE_HOST`/`LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`；选 Langfuse Cloud Hobby 部署（非本地自建）；渐进式开关 `LANGFUSE_ENABLED=False` 默认关闭，开关关闭时零 SDK 初始化/零网络调用；agent_chat/stream_service 在 try 末尾成功路径 + except 失败路径各调一次 `report_agent_trace` 上报顶层 Trace；不上报原文 chunk 全文为 PII 脱敏预留；后端 `Application startup complete` 通过；评估回归 20/20 通过，correctness 0.9/rerank_recall 0.8/retrieval_recall 0.9 全持平基线
-- P0-6 已完成：`rag_trace` 新增 `token_usage`（model/total/by_node），新增 `generate_answer_with_usage` 返回 usage；5 个 LLM 节点（classify/rewrite/answer/grounding_check/hyde_expand）调 `record_token_usage` 写 by_node+total；按 user 要求**只统计 token 不算成本**（cost_usd 移除）；新增 `GET /chat/agent/sessions/{id}/usage` session 级聚合；前端 TracePanel 加 Session total + Token usage 区块；零 DB schema 变更（写进现有 rag_trace JSON 列）；评估 20/20 correctness 0.9/recall 0.9/rerank 0.8 持平基线
+- P0-6 已完成：`rag_trace` 新增 `token_usage`（model/total/by_node），新增 `generate_answer_with_usage` 返回 usage；5 个 LLM 节点（classify/rewrite/answer/grounding_check/hyde_expand）调 `record_token_usage` 写 by_node+total；按用户要求**只统计 token 不算成本**（cost_usd 移除）；新增 `GET /chat/agent/sessions/{id}/usage` session 级聚合；前端 TracePanel 加 Session total + Token usage 区块；零 DB schema 变更（写进现有 rag_trace JSON 列）；评估 20/20 correctness 0.9/recall 0.9/rerank 0.8 持平基线
 - P1-1 已完成：检索能力 Tool 化，双轨并存——纯函数（`vector_search_tool`/`hybrid_search_tool`/`keyword_search_tool`/`rerank_tool`，graph quick path 继续直接调用，一行未动）+ LangChain `StructuredTool` 工厂（`make_xxx_tool` / `build_retrieval_tools(user_id, rag_trace=None)`，返回紧凑 JSON 供 ReAct ToolMessage）；新增 `keyword_search` 独立工具（keyword_recall public 入口）；user_id 服务端闭包绑定、不进 tool schema 防越权（冒烟验证 user_id=999 跨租户无结果）；Tool 异常均返回 `{"error":...}` 不抛异常；4 工具均不调 LLM，P0-6 token 统计无需改动；graph/state/prompts/DB schema 零变更；评估 20/20 correctness 0.9/recall 0.9/rerank 0.8 持平基线
 - P1-2 已完成：图内新增 `react_agent` 节点（`app/agent/react_agent.py`，invoke `create_react_agent` 子图绑定 4 检索工具），quick path 完整保留；**三层漏斗自动路由**——前置升级（classify：`app/agent/routing.py` 规则脚本 3 条硬信号 + LLM JSON 输出 need_react 软信号，规则优先、保守、闲聊不升级）、后置升级 1（expansion 二轮后 grade 证据不足）、后置升级 2（grounding 失败）；`react_attempted` 护栏保证 ReAct 最多一次，仍失败→fallback（react_no_evidence/react_error 文案）；**ReAct 只负责收集证据（拆问/多轮/换工具/多跳），最终答案复用 quick path 统一合成**（prompt_builder + generate_answer_with_usage），引用 [N] 与证据 index 确定性一致，再过同一 grounding 门控；总开关 `REACT_AGENT_ENABLED=False` 默认关闭（关闭时升级边全部回退、零调用）；SSE 新增 `deep_research` 过渡事件；无 DB schema 变更、无新依赖；开关关闭评估 20/20 持平基线（0.9/0.9/0.8、零升级），开关开启冒烟复合问题 8 轮工具/19 证据/citations 正确/grounding passed、越界问题诚实拒答
-- **下一个待办任务：P1-3（grade 分数 / fallback 率 / react 触发率 / 延迟持久化到 DB）**
+- P1-3 已完成：新增 `app/models/metric.py`（`AgentMetric` 表，一行=一轮 assistant 请求）+ `app/services/metric_service.py`（`persist_agent_metric` 从 agent 最终 state+rag_trace+debug_info 提取 route/cache_hit/need_react/react_attempted/react_reason/react_trigger_reason/react_status/react_tool_rounds/react_evidence_count/evidence_grade/grade_metrics/grounding/need_fallback/fallback_reason/total_latency_ms/node_timings/token_prompt/completion/total 落库）；`save_turn` 改返回 `Optional[ChatMessage]` 向后兼容（调用方接住 id 关联 metric 行）；成功+失败两条路径都写入（失败标 error+need_fallback，无 chat_message_id）；写入异常静默不影响主流程；不存原文答案（PII 考量，原文由 chat_messages 持有）；SQLite 沿用 `Base.metadata.create_all` 自动建表（migration 说明已写 04-progress-log）；不改 graph/prompt/retrieval/quick path；冒烟端到端验证落库正确（route/grade/grounding/latency/token 全字段正确，chat_message_id=18 成功关联）
+- P1-4 已完成：新增 `app/routers/metrics.py`（4 个只读端点 `/metrics/summary`/`/timeseries`/`/recent`/`/react`）+ `app/schemas/metrics.py`（4 个响应模型）+ 扩展 `metric_service.py`（4 个聚合查询函数 `get_metrics_summary`/`get_metrics_timeseries`/`get_recent_metrics`/`get_react_comparison`，DB 层 `func.avg`/`func.count`/`func.date` 聚合，P95 用 Python 简单分位数避免 numpy）；鉴权复用 `get_current_user` 默认按 current_user.id 过滤（租户隔离）；ReAct 对比端点分 react_attempted True/False 两组 + delta；前端新增 `frontend/src/pages/Metrics.jsx`（Summary 卡片网格 + ReAct 对比表 + 每日柱状图原生 CSS 不引入图表库 + 最近 20 条明细表）+ `api/metrics.js` + App.jsx 侧边栏加 metrics 导航；无 DB schema 变更/无 agent/graph/prompt 改动；后端 4 端点路由注册验证通过 + service 层 4 函数冒烟返回正确结构 + 前端 vite build 通过（30 modules）
+- **下一个待办任务：P1-5（Celery 异步索引）或 P1-6（前端反馈按钮，结合 P1-3 metric 行做低分答案定位）**
 
 ## 下一步优先做什么
 
 按 `03-task-backlog.md` 中状态为 `todo` 的任务，按编号顺序推进。当前推荐起点：
 
-### P1-3：grade 分数 / fallback 率 / 延迟持久化到 DB
+### P1-5：文档索引切到 Celery + Redis broker
 
-- **位置**：新增 `app/models/metric.py`（评估通过后）
-- **目标**：把每轮请求的 grade 分数、grounding 结果、fallback 触发、react 触发（need_react/react_reason/react_tool_rounds/react_evidence_count）、各节点延迟与 token 落库，支撑每日报表与 ReAct vs quick path 效果对比
+- **位置**：新增 `app/celery_app.py` + tasks 模块
+- **目标**：把文档索引（解析→分块→embedding→入向量库）从同步 HTTP 请求切到 Celery 异步任务队列，支撑大文件并发索引不阻塞 Web 进程
 - **要点**：
-  - 涉及 DB schema 变更，开工前必须先告知用户并写 migration 说明
-  - react 相关字段已全部在 AgentState/debug_info/rag_trace 中（P1-2），持久化时直接取用
-  - 为后续灰度决策（REACT_AGENT_ENABLED 是否常开）提供数据：ReAct 触发率、抢救率、token 成本
+  - 项目已有 Redis（缓存层），可直接复用为 broker
+  - 现有 `document_job` 表已有状态字段，可作为任务追踪载体
+  - 涉及新依赖 `celery`，需先确认 requirements.txt 合理性
+  - 不改 agent/graph/prompt，仅改 indexing 链路入口
+
+### P1-6：前端答案区 👍/👎 反馈按钮（备选）
+
+- **位置**：改 `frontend/src/pages/Chat.jsx` + 新增 `app/routers/feedback.py`
+- **目标**：用户对答案点 👍/👎，写入 evaluation 表，结合 P1-3 metric 行做"低分答案"定位
+- **价值**：P1-3 的 metric 表 + 用户反馈 = 在线评估闭环，可定位"grounding passed 但用户不满意"的 case
+- **依赖**：依赖 P1-3 metric 行（已就绪），无阻塞
 
 ### 推荐推进顺序
 
-1. **P1-3**（指标持久化）→ 2. P1-4（监控大盘 API）→ P1 其余任务（P1-5 Celery / P1-6 反馈按钮 / P1-7 Small-to-Big）
+1. **P1-5**（Celery 异步索引）或 **P1-6**（反馈按钮）→ P1 其余任务（P1-7 Small-to-Big）
 
 ## 开始开发前必做
 

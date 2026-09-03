@@ -6,6 +6,7 @@ import Upload from "./pages/Upload";
 import Documents from "./pages/Documents";
 import Search from "./pages/Search";
 import Chat from "./pages/Chat";
+import Metrics from "./pages/Metrics";
 
 const pages = {
   upload: {
@@ -31,6 +32,12 @@ const pages = {
     icon: "A",
     title: "Agentic RAG",
     subtitle: "Stream answer steps, second retrieval, and structured rag_trace.",
+  },
+  metrics: {
+    label: "Metrics",
+    icon: "M",
+    title: "Agent Metrics",
+    subtitle: "Daily fallback rate, ReAct vs quick path, latency & token consumption.",
   },
 };
 
@@ -117,6 +124,7 @@ export default function App() {
           {page === "docs" && <Documents />}
           {page === "search" && <Search />}
           {page === "chat" && <Chat />}
+          {page === "metrics" && <Metrics />}
         </section>
       </main>
     </div>

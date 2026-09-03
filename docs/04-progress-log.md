@@ -18,6 +18,101 @@
 
 ---
 
+### Session 2026-09-04（P1-4 监控大盘 API + 前端 Metrics 页）
+
+- **目标**：完成 P1-4 — 把 P1-3 落库的 `agent_metrics` 表通过 4 个聚合查询 API 暴露，并在前端新增 Metrics 页可视化，支撑每日报表与 ReAct vs quick path 效果对比
+- **完成任务**：
+  - [P1-4] 监控大盘 API + 前端页 — 改动文件：
+    - `app/schemas/metrics.py`（新增）：4 个 Pydantic 响应模型 `MetricSummary`（总数/fallback 率/react 触发率/抢救率/avg+p95 延迟/avg+total token/grounding 通过率/cache 命中率）、`MetricTimeseriesItem`（按日聚合项）、`MetricRecentItem`（明细行）、`ReactComparison`（quick_path+react 两组 `ReactGroupStats` + delta_latency_ms/delta_token_total）
+    - `app/services/metric_service.py`：扩展 4 个聚合查询函数
+      - `get_metrics_summary`：DB 层 `func.avg`/`func.sum` 聚合，`_apply_filters` 通用过滤拼装，P95 用 Python 简单分位数（`_percentile`，避免引入 numpy），空数据返回零值骨架
+      - `get_metrics_timeseries`：`func.date(created_at)` 提取 YYYY-MM-DD 按日 group by，`func.cast(Bool, Integer)` 求和 fallback/react/grounding 计数
+      - `get_recent_metrics`：按 created_at desc 取 N 条（limit clamped [1,200]），`_metric_row_to_dict` ORM→dict
+      - `get_react_comparison`：react_attempted=True 一组、isnot(True) 一组（兼容 None），各自聚合 + react 组专属 avg_tool_rounds/avg_evidence_count/success_count/rescue_rate，delta 两组差值
+    - `app/routers/metrics.py`（新增）：4 个 GET 端点 `/metrics/summary`、`/metrics/timeseries`、`/metrics/recent`、`/metrics/react`，全部 `Depends(get_current_user)` 鉴权，统一 `APIResponse` 包装，支持 query 参数 start/end(ISO)/session_id/limit
+    - `app/main.py`：import + 注册 metrics router
+    - `frontend/src/api/metrics.js`（新增）：4 个 API 函数 `getMetricsSummary`/`getMetricsTimeseries`/`getRecentMetrics`/`getReactComparison`，复用 `apiFetch`，`buildParams` 拼 query
+    - `frontend/src/pages/Metrics.jsx`（新增）：Metrics 页 4 区块
+      - 顶部工具栏：1/7/30 天范围切换 + Refresh
+      - `SummaryCards`：10 张卡片网格（总请求/fallback 率/react 触发率/抢救率/avg 延迟/P95/avg token/total token/grounding 通过率/cache 命中率）
+      - `ReactComparisonCard`：quick path vs ReAct 对比表（8 行指标 + delta 行）
+      - `TimeseriesChart`：每日柱状图（总请求/fallback/react 三色叠加，原生 CSS 不引入图表库）
+      - `RecentTable`：最近 20 条明细（时间/route/cache/grade/grounding/fallback/react/latency/token/session），fallback/react 用彩色 tag
+    - `frontend/src/App.jsx`：import Metrics + `pages` 对象加 `metrics` 项（icon M）+ 侧边栏自动渲染 + 路由分支
+    - `frontend/src/App.css`：追加 Metrics 页样式（toolbar/range-btn/summary-grid/card/ts-chart/ts-bar/recent-table/tag），复用现有 CSS 变量（--panel/--border/--accent/--text/--muted）
+- **关键决策**：
+  - **租户隔离**：复用 P0-3 原则，已登录用户默认按 `current_user.id` 过滤，`_apply_filters` 强制 user_id；项目无 RBAC（P2-3 才做），暂不开放全局查询，admin 视角留到 P2-3
+  - **不引入图表库**：TimeseriesChart 用纯 CSS div 柱状图（总请求半透明底+fallback 橙+react 紫叠加），避免 recharts/chart.js 依赖膨胀（个人项目数据量小，简单柱状图够用）
+  - **P95 用 Python 计算而非 numpy**：样本量小，`_percentile` 简单线性插值实现，避免引入 numpy 重依赖
+  - **react 对比用 isnot(True) 而非 is_(False)**：兼容 react_attempted=None（开关关闭时旧数据/P1-3 失败行），把 None 归入 quick path 组符合语义
+  - **空数据返回零值骨架而非 404**：summary 端点 total=0 时返回全 0 字段，前端 SummaryCards 仍能渲染（避免空页面）
+  - **无 DB schema 变更、无 agent/graph/prompt 改动**：纯只读查询层 + 前端展示，不触及评估脚本路径，无需评估回归
+  - **ISO 时间容错**：`_parse_time` 兼容带 Z/时区的 ISO 串，前端传 `toISOString()`（带 Z）可解析
+- **验证**：
+  - 后端 import 通过：`get_metrics_summary`/`get_metrics_timeseries`/`get_recent_metrics`/`get_react_comparison` + 4 个 schema 均可加载
+  - 路由注册：`from app.main import app` 后 `app.routes` 含 4 个 `/metrics/*` 路径
+  - service 层冒烟（临时脚本，跑完已删）：用 P1-3 落库的 user_id=1 数据调 4 个函数
+    - summary: total_requests=1, grounding_pass_rate=1.0, avg_latency=11784.585ms, avg_token=1696
+    - timeseries: 2026-09-03 一条，request_count=1
+    - recent: 1 行明细，22 字段全返回
+    - react: quick_path count=1, react count=0（开关关闭符合预期）, delta 为 null（react 组无样本）
+  - 前端 vite build 通过：30 modules transformed，built in 655ms，无错误（仅 Browserslist 数据旧警告非错误）
+- **未完成/遗留**：
+  - 端到端前端实测（启动前后端在浏览器看 Metrics 页渲染）需用户启动前后端验证；本 session 仅代码就绪 + 构建通过
+  - 日报表/告警（异常 fallback 率自动通知）留到后续
+  - 多用户/全局视角的 admin 大盘留到 P2-3 RBAC 后
+- **下一步建议**：
+  1. P1-5：文档索引切到 Celery + Redis broker（异步任务队列，新增 `celery_app.py` + tasks）
+  2. 或 P1-6：前端答案区 👍/👎 反馈按钮（结合 P1-3 metric 行做"低分答案"定位）
+
+---
+
+### Session 2026-09-04（P1-3 agent 指标持久化到 DB）
+
+- **目标**：完成 P1-3 — 把每轮 agent 请求的关键指标（route/cache_hit/evidence_grade/grade 分数/grounding/fallback/react 触发情况/各节点延迟/token）落库成独立表 `agent_metrics`，为每日报表与 ReAct vs quick path 效果对比、`REACT_AGENT_ENABLED` 灰度决策提供数据
+- **完成任务**：
+  - [P1-3] agent 指标持久化 — 改动文件：
+    - `app/models/metric.py`（新增）：`AgentMetric` 表，一行=一轮 assistant 请求。字段：id/chat_message_id(FK→chat_messages.id, nullable)/session_id/user_id/created_at + route/cache_hit + need_react/react_attempted/react_reason/react_trigger_reason/react_status/react_tool_rounds/react_evidence_count + evidence_grade/grade_metrics(JSON) + grounding_passed/grounding_reason + need_fallback/fallback_reason + total_latency_ms/node_timings(JSON)/token_prompt/token_completion/token_total + metadata_json（source/error）。三个索引 `(user_id,created_at)`/`(session_id,created_at)`/`(created_at)`
+    - `app/models/__init__.py`：注册 `AgentMetric` re-export
+    - `app/main.py`：`from app.models import ... metric ...` 显式 import 触发建表（`Base.metadata.create_all` 自动建表，无 alembic）
+    - `app/services/metric_service.py`（新增）：`persist_agent_metric(state, session_id, user_id, chat_message_id, source, error, elapsed_ms)` 从 agent 最终 state 提取字段写入；`_safe_int/_safe_bool/_safe_float` 容错；`_extract_total_latency` 优先取 agent_total_ms/agent_stream_total_ms；写入异常 try/except 静默 log warning 不阻断主流程
+    - `app/services/chat_session_service.py`：`save_turn` 改返回 `Optional[ChatMessage]`（向后兼容，之前无返回值）；assistant 行的 ChatMessage 含 id 供调用方关联 metric
+    - `app/services/agent_memory_service.py`：re-export wrapper `save_turn` 同步改返回 `Optional[ChatMessage]`（透传）
+    - `app/services/agent_chat_service.py`：成功路径接住 save_turn 返回的 chat_message_id，在 Langfuse 上报后调 `persist_agent_metric`；失败路径同样写一行（标 error + need_fallback，无 chat_message_id，做 locals 兜底防 NameError）
+    - `app/services/agent_stream_service.py`：同上，成功路径（trace SSE 事件前）+ 失败路径（locals 兜底）各调一次 `persist_agent_metric`
+- **DB schema 变更（migration 说明）**：
+  - 新增表 `agent_metrics`（CREATE TABLE by `Base.metadata.create_all(bind=engine)` on startup；SQLite，无 alembic）
+  - 字段定义见 `app/models/metric.py`；不动现有任何表（chat_sessions/chat_messages/documents/document_jobs/parent_chunks/users 均未改）
+  - 关联：`agent_metrics.chat_message_id` 外键指向 `chat_messages.id`（nullable，失败路径无关联）
+  - 既有 rag.db 重新启动后端即自动建表，无需手动跑 migration 脚本；既有数据不受影响
+- **关键决策**：
+  - **不存原文答案**：agent_metrics 只存标志/分数/延迟/token，原文由 chat_messages 表持有（已存于 rag_trace + content）；避免 PII 膨胀与重复存储
+  - **save_turn 改返回值而非新增函数**：`save_turn` 之前无返回值，改为返回 `Optional[ChatMessage]` 是最小且向后兼容的改动；调用方接住 `.id` 即可关联，无需新增 helper 或在 service 层做"查最新 assistant 行"的脆弱查询
+  - **失败路径也写 metric**：异常路径 state 可能为空 dict / final_session_id 可能未赋值，做 locals 兜底；失败行 chat_message_id=None 但标 error + need_fallback，用于统计失败率（与 Langfuse 失败上报对齐）
+  - **写入异常静默**：metric 写入失败只 log warning 不抛异常，绝不影响 agent 主流程与 SSE 流（与 Langfuse 上报同样的容错原则）
+  - **未改 graph/prompt/retrieval/quick path**：纯外围持久化层；评估脚本 `evaluate_agent_day18.py` 直接调 `agent_graph.invoke(state)` 不经 service 层，本次改动对其零影响
+  - **延迟取值优先级**：优先调用方传入的 `elapsed_ms`（端到端 wall-clock 计时，最准），其次 rag_trace.timing 的 agent_total_ms/agent_stream_total_ms，最后 timing 各 stage 求和兜底
+  - **react 相关字段从 debug_info 提取**：react_trigger_reason/react_status/react_tool_rounds/react_evidence_count 在 P1-2 已写入 debug_info（非 state 顶层），metric_service 从 `state.debug_info` 取；need_react/react_attempted/react_reason 在 state 顶层
+- **验证**：
+  - 全模块 import 通过（.venv python）：`AgentMetric` / `persist_agent_metric` / `agent_chat` / `stream_agent_chat_sse` 均可加载
+  - 建表：`Base.metadata.create_all` 成功，`agent_metrics` 表已存在
+  - 端到端冒烟（临时脚本，跑完已删）：`agent_chat("缓存分哪几种？", user_id=1)` → agent_metrics 写入 1 行，字段全字段正确提取：
+    - route=kb_qa, cache_hit=False, evidence_grade=sufficient, grounding_passed=True, need_fallback=False
+    - need_react=False, react_attempted=None（开关关闭符合预期）, react_tool_rounds=None
+    - chat_message_id=18（成功关联到 chat_messages 表）
+    - total_latency_ms=11784.585（端到端）, token_total=1696（从 rag_trace.token_usage.total 提取）
+    - 注：该问题为知识库外问题，answer 为拒答（"没有关于缓存分类的信息"），grounding passed=True 符合 P0-2 拒答不算幻觉设计
+  - 评估回归：本次未改 prompt/graph/retrieval，评估脚本直接调 graph.invoke 不经改动层，无需跑 20-case 回归（冒烟已端到端验证落库正确）
+- **未完成/遗留**：
+  - metric 查询/聚合 API 留到 P1-4（监控大盘 API，新增 `routers/metrics.py`）
+  - 前端 TracePanel 暂未展示 metric 行（rag_trace 已有 token/grounding 展示，metric 表主要用于后端聚合报表与灰度决策数据）
+  - 日报表/告警留到 P1-4 或后续
+- **下一步建议**：
+  1. P1-4：监控大盘 API（聚合 `agent_metrics` 表：日 fallback 率/react 触发率/平均延迟/token 消耗），新增 `routers/metrics.py`
+  2. 数据积累后用 metric 表量化 ReAct vs quick path（开关开启跑一轮评估集对比 react 触发率/抢救率/token 成本）
+
+---
+
 ### Session 2026-09-04（P1-2 ReAct Agent 与三层漏斗自动路由）
 
 - **目标**：完成 P1-2 — 在现有 LangGraph StateGraph 内新增 `react_agent` 节点（invoke `create_react_agent` 子图，绑定 P1-1 的 4 个检索工具），实现 quick path（静态编排图）与 ReAct 双轨并存的**自动路由**；用户拍板方案：三层漏斗、两个后置升级点都要、图内加节点（不做独立端点）
