@@ -48,6 +48,15 @@ def build_agent_debug_summary(result: Dict[str, Any]) -> Dict[str, Any]:
         "grounding_reason": result.get("grounding_reason"),
         "grounding_status": raw_debug.get("grounding_status"),
 
+        # P1-2：ReAct 三层漏斗路由
+        "need_react": result.get("need_react"),
+        "react_attempted": result.get("react_attempted"),
+        "react_reason": result.get("react_reason"),
+        "react_status": raw_debug.get("react_status"),
+        "react_trigger_reason": raw_debug.get("react_trigger_reason"),
+        "react_tool_rounds": raw_debug.get("react_tool_rounds"),
+        "react_evidence_count": raw_debug.get("react_evidence_count"),
+
         # P0-6：token / 成本统计（从 rag_trace.token_usage.total 提炼）
         "token_total": (result.get("rag_trace") or {}).get("token_usage", {}).get("total"),
 
@@ -95,5 +104,13 @@ def summarize_agent_result_for_log(result: Dict[str, Any]) -> str:
 
     if "fallback_reason" in debug_summary and debug_summary.get("fallback_reason"):
         parts.append(f"fallback_reason={debug_summary.get('fallback_reason')}")
+
+    if debug_summary.get("react_attempted"):
+        react_part = f"react={debug_summary.get('react_status')}"
+        if debug_summary.get("react_tool_rounds") is not None:
+            react_part += f"/rounds={debug_summary.get('react_tool_rounds')}"
+        if debug_summary.get("react_trigger_reason"):
+            react_part += f"/reason={debug_summary.get('react_trigger_reason')}"
+        parts.append(react_part)
 
     return " | ".join(parts)

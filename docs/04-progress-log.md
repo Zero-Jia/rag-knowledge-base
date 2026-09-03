@@ -18,6 +18,79 @@
 
 ---
 
+### Session 2026-09-04（P1-2 ReAct Agent 与三层漏斗自动路由）
+
+- **目标**：完成 P1-2 — 在现有 LangGraph StateGraph 内新增 `react_agent` 节点（invoke `create_react_agent` 子图，绑定 P1-1 的 4 个检索工具），实现 quick path（静态编排图）与 ReAct 双轨并存的**自动路由**；用户拍板方案：三层漏斗、两个后置升级点都要、图内加节点（不做独立端点）
+- **完成任务**：
+  - [P1-2] ReAct Agent + 三层漏斗路由 — 改动文件：
+    - `app/agent/routing.py`（新增）：`detect_complex_query(question) -> Tuple[bool, str]` 规则脚本，3 条硬信号（问号≥2 → `rule_multi_question_mark`；比较词+连接词共现 → `rule_comparison`；并列连接词引导的多分句 → `rule_parallel_clause:*`），零 token、确定性
+    - `app/agent/react_agent.py`（新增）：`build_react_agent(user_id, rag_trace)`（ChatOpenAI temperature=0.1，绑定 4 工具 text 截断 800 字符，REACT_SYSTEM_PROMPT，历史对话带 2 轮）；`react_agent_node` 入口置 `react_attempted=True`，`recursion_limit` 护栏（默认 25）；`_collect_evidence` 从 ToolMessage JSON 按 chunk_id 去重保序收集证据；`_sum_token_usage` 累加 AIMessage usage_metadata；**证据收集成功后复用 quick path 统一合成链路**（`build_messages` + `generate_answer_with_usage`）产出最终答案；成功回写 final_answer/reranked_docs/retrieved_docs/citations（`build_citations`），重置 need_fallback 交给 grounding_check 重新门控；无证据 → `react_no_evidence`，异常/空合成 → `react_error`，经 `_finalize_failure` 置 need_fallback
+    - `app/agent/graph.py`：新增 `_react_enabled()`、`_can_upgrade_to_react(state)`（开关开 且 react_attempted 非 True）、`predict_react_upgrade(prev_node, state)`（SSE 复用，路由判定单点）；`route_after_cache` / `route_after_grade_documents` / `route_after_grounding` 三处条件边加 `"react_agent"` 升级分支；注册节点 + 条件边映射 + `add_edge("react_agent", "grounding_check")`；docstring 更新
+    - `app/agent/nodes/classify_node.py`：重写。规则检测始终执行（写 debug）；LLM 分类改 JSON 输出 `{"route","need_react","reason"}`，`_parse_classify_output` 剥 ```json 围栏、json.loads 失败回退裸标签；`need_react = react_enabled and react_reason is not None and label != "chat"`（规则命中 reason 优先，否则 `llm_complex`；闲聊路由永不升级）；LLM 异常路径规则仍生效
+    - `app/agent/prompts.py`：CLASSIFY_SYSTEM_PROMPT 改 JSON 输出 + 保守原则（拿不准 need_react=false）；新增 REACT_SYSTEM_PROMPT（agent 只负责拆问/多轮检索/换工具/多跳收集证据，收齐后停止调用工具并用一两句简述证据覆盖情况，**不自己撰写正式答案**）
+    - `app/agent/state.py`：AgentState 新增 `need_react: bool`、`react_attempted: bool`、`react_reason: Optional[str]`
+    - `app/agent/tools/`（`__init__.py`/`_common.py`/4 个工具文件）：工厂新增 `text_limit` 形参（ReAct 用 800，quick path 默认 300 不变），`build_retrieval_tools(text_limit=None)` 透传
+    - `app/core/config.py`：新增 `REACT_AGENT_ENABLED=False`（默认关闭）、`REACT_RECURSION_LIMIT=25`、`REACT_TOOL_TEXT_LIMIT=800`
+    - `app/agent/nodes/fallback_node.py`：新增 `react_no_evidence` / `react_error` 两条拒答文案
+    - `app/agent/debug.py`：摘要新增 need_react/react_attempted/react_reason/react_status/react_trigger_reason/react_tool_rounds/react_evidence_count；日志摘要加 `react=.../rounds=.../reason=...`
+    - `app/services/agent_stream_service.py`：导入 `predict_react_upgrade`；rag_step 后预测升级则发 `deep_research` SSE 事件（status/from_node/reason/trace_id）；trace 事件加 need_react/react_attempted/react_reason
+- **关键决策**：
+  - **图内加节点而非独立端点**：ReAct 是图中一个节点，与 quick path 共享缓存、grounding、fallback、token 统计、SSE 骨架；无 DB schema 变更、无新第三方依赖
+  - **三层漏斗路由**：① 前置升级（classify：规则脚本硬信号 OR LLM need_react 软信号，规则优先、保守原则、闲聊不升级），cache miss 后直接进 ReAct；② 后置升级 1：grade_documents 在 expansion 二轮后证据仍不足 → ReAct；③ 后置升级 2：grounding_check 失败 → ReAct 重新检索合成。后置升级有效的根因：quick path 失败主因是召回机制失败（单 query 单向量单方向、expansion 开环盲试、无多意图拆解），ReAct 多子查询多方向、看结果闭环决策、按失败形态换工具、证据实体重述多跳；知识真不存在时 ReAct 同样失败 → fallback 拒答为终态
+  - **`react_attempted` 状态位防环**：统一 `_can_upgrade_to_react` 护栏保证 ReAct 全程最多一次；ReAct 产出后无论成功失败都不再升级
+  - **职责切分：ReAct 收集证据，答案合成复用 quick path**：开发中发现让 ReAct 自己写最终答案会出现过程性语句开头、正文 `doc11` 口语引用等格式漂移（即使 prompt 两次强化仍复发）。改为 agent 只做检索编排，收齐证据后用 `prompt_builder.build_messages` + answer 同款 prompt 统一合成——引用 [N] 与证据 index 严格一致（citations 确定性映射）、无过程语、grounding 行为与 quick path 完全对齐；ReAct 的自主性全部体现在证据收集阶段
+  - **grounding 门控两条链路共享**：ReAct 答案同样过 grounding_check（空答案/cache_hit/chat 短路逻辑已核实兼容）；ReAct 失败（空答案+need_fallback）时 grounding 短路放行 → fallback
+  - **总开关默认关闭**：`REACT_AGENT_ENABLED=False` 时所有升级边回到原 quick path，ReAct 零调用、零 token 风险；分类 LLM 仍输出 JSON 但 need_react 被开关与护栏忽略
+- **验证**：
+  - 规则脚本单测：4 hit（多问号/比较句/并列分句）+ 5 miss 全过
+  - 开关关闭：图结构与路由全部走原路（单测断言）；`evaluate_agent_day18.py` 20 case 全执行，react_attempted=0、need_react=true=0、grounding failed=0，answer_correctness **0.9** / retrieval_recall@8 **0.9** / rerank_recall **0.8**，全部持平基线
+  - 开关开启冒烟（复合问题"缓存分哪几种？语义缓存用的什么模型？fallback 什么时候触发？"）：前置命中 `rule_multi_question_mark` → ReAct 8 轮工具调用、19 条去重证据 → 统一合成答案无过程语、citations=2 正确映射（[7]→doc12、[10]→doc11）、grounding passed、need_fallback=False；token 记录完整（prompt 23729/completion 920，含合成）
+  - SSE 冒烟（越界复合问题"量子计算的原理…？火星大气…？"）：事件序列 rag_step×3 → **deep_research**（from_node=cache，reason=rule_multi_question_mark）→ rag_step → content 流式 → trace → done；trace 中 react_attempted=true、need_react=true；证据为不相关片段时合成答案诚实拒答（"上下文未包含…"），grounding 放行，无幻觉
+- **未完成/遗留**：
+  - 后置升级点 1/2（grade 证据不足 / grounding 失败 → ReAct）的路由谓词已单测覆盖，但未构造 e2e 场景实测触发（需 mock 召回失败）；节点本身成功/失败路径已由前置升级 e2e 覆盖
+  - ReAct 触发率与抢救率尚无数据：开关开启跑评估集/线上灰度后，用 P1-3 metrics（fallback 率/grade 分数/react_tool_rounds）量化对比
+  - `REACT_TOOL_TEXT_LIMIT=800` 为冒烟经验值，后续按证据充分性再调
+- **下一步建议**：
+  1. P1-3：grade 分数 / fallback 率 / react 触发率 / 延迟持久化到 DB（新增 `models/metric.py`），为 ReAct vs quick path 效果对比与灰度决策提供数据
+  2. 开关开启状态下跑一轮评估集，观察 20 case 的升级触发与答案质量（注意 token 成本）
+
+---
+
+### Session 2026-09-03（P1-1 检索能力 Tool 化）
+
+- **目标**：完成 P1-1 — 把 retrieve/rerank/keyword/search 封装为标准 LangChain Tool，为 P1-2 ReAct agent 自主调用打基础；现有 LangGraph 静态图（quick path）保持不动并继续作为线上主链路
+- **完成任务**：
+  - [P1-1] retrieve/rerank/keyword/search 改造成 LangGraph Tool — 改动文件：
+    - `app/agent/tools/_common.py`（新增）：Tool 版共用输出层，`format_chunks_for_llm()` 把 chunk list 序列化为紧凑 JSON（index/chunk_id/document_id/score/text 截断 300 字符），`format_tool_error()` 统一错误返回（Tool 不抛异常，让 agent 看到错误自纠），`pick_score()` 按 rerank_score>final_score>score>keyword_score>bm25_score 优先级取分
+    - `app/agent/tools/keyword_tool.py`（新增）：`keyword_search_tool()` 纯函数（复用 `hybrid_retrieval.keyword_recall`，出口切 `[:top_k]` 保证工具语义）+ `make_keyword_search_tool()` 工厂（`keyword_search`，BM25 词法检索，适合精确术语/编号/错误码）
+    - `app/agent/tools/vector_tool.py`：追加 `make_vector_search_tool()`（`vector_search`，纯语义检索，混合检索无结果时兜底）；原 `vector_search_tool()` 纯函数一行不动
+    - `app/agent/tools/hybrid_tool.py`：追加 `make_hybrid_search_tool(user_id, rag_trace=None)`（`hybrid_search`，向量+BM25 融合，ReAct 首选工具，rag_trace 可选透传延续 timing/cache_hit 记录）；原 `hybrid_search_tool()` 纯函数一行不动
+    - `app/agent/tools/rerank_tool.py`：追加 `make_rerank_tool()`（`rerank`，cross-encoder 精排）+ `_parse_docs_arg()` 解析 LLM 传入的 docs JSON（兼容 `{"count":N,"chunks":[...]}` 包装格式与裸数组，仅保留含 text 的 dict）；原 `rerank_tool()` 纯函数一行不动
+    - `app/agent/tools/__init__.py`（原为空）：re-export 4 个纯函数 + 4 个工厂，新增 `build_retrieval_tools(user_id, *, rag_trace=None)` 一次性构造工具集，返回顺序即推荐优先级 hybrid > vector > keyword > rerank
+    - `app/services/hybrid_retrieval.py`：新增 public `keyword_recall(query, top_k, *, user_id)` 入口包装私有 `_keyword_recall`（最小改动，hybrid 内部融合流程仍直接调 `_keyword_recall`，召回池放大逻辑不变）
+- **关键决策**：
+  - **双轨并存，quick path 零改动**：纯函数（返回 dict list）供 graph 节点继续直接调用；StructuredTool 工厂（返回紧凑 JSON 字符串）供 P1-2 ReAct 的 ToolMessage 消费。两者委托同一底层实现（retrieval_service / hybrid_retrieval / RerankService），不存在逻辑分叉；graph.py / state.py / prompts.py / 节点全部未动
+  - **user_id 闭包绑定，绝不进 tool schema**：租户隔离参数由服务端（chat 入口）在工厂处注入，LLM 可见的 args 只有 query/top_k/top_n/docs，冒烟断言 schema 无 user_id 泄漏，防止 agent 被诱导跨租户检索
+  - **Tool 不抛异常**：空 query / 检索无结果 / docs JSON 解析失败 / 模型异常均返回 `{"error": ...}` JSON 字符串，让 ReAct agent 能看到错误并自纠（换工具/改 query）
+  - **rerank 工具无需 user_id**：cross-encoder 是本地模型推理、不访问向量库，租户隔离已在上游检索环节完成；且 4 个工具均不调用 LLM（rerank 非 LLM），P0-6 token 统计无需任何改动
+  - **keyword 独立工具出口切 [:top_k]**：底层 `_keyword_recall` 按 RECALL_MULTIPLIER=2 放大召回池是给融合阶段用的，独立工具尊重 top_k 语义；切片只在纯函数出口，hybrid 融合路径不受影响
+  - **无新增依赖**：`langchain-core`（StructuredTool）已在 requirements.txt
+- **验证**：
+  - 冒烟测试（临时脚本，跑完已删）：4 工具注册成功（hybrid_search/vector_search/keyword_search/rerank）；args schema 均无 user_id；hybrid/vector/keyword 主路径返回正确 JSON；rerank 可直接吃 hybrid_search 返回 JSON 模拟多工具串联，裸数组也兼容；空 query/非法 docs/空 docs 均返回 error JSON 不抛异常；**user_id=999 检索 user_id=1 数据返回无结果（租户隔离在 Tool 层生效）**；user_id=None 未登录/评估场景兼容
+  - 评估回归（`scripts/evaluate_agent_day18.py`，.venv 环境，需 `PYTHONPATH=.`）：20 case 全通过
+    - avg_answer_correctness 0.9（持平基线）
+    - avg_retrieval_recall@8 0.9（持平基线）
+    - avg_rerank_recall@5 0.8（持平基线）
+    - grounding 20/20 passed，无误杀
+- **未完成/遗留**：
+  - Tool 层目前只有冒烟验证，尚无 ReAct 调用方；P1-2 新增 `react_agent.py` 时通过 `build_retrieval_tools(user_id)` 接入，并决定 quick path / ReAct 的路由策略
+  - Tool 输出 text 截断 300 字符为固定值，P1-2 实际 ReAct 调试后如发现上下文不足再调
+- **下一步建议**：
+  1. P1-2：新增 `app/agent/react_agent.py`，用 langgraph prebuilt `create_react_agent`（langgraph-prebuilt 已在依赖）绑定 `build_retrieval_tools()`，保留现有图为 quick path，二者并存
+  2. P1-2 需要决策：quick path 与 ReAct 的分流方式（按 route？按置信度？灰度开关？），开工前与用户确认
+
+---
+
 ### Session 2026-09-03（P0-6 token 消耗统计）
 
 - **目标**：完成 P0-6 — 在 rag_trace 中记录每轮/每节点 token 消耗，前端可展示 session 总 token 与各环节 token；P0 阶段收尾

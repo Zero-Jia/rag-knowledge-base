@@ -63,8 +63,8 @@ citations: List[Dict[str, Any]]  # [{index: 1, chunk_id: "...", text: "...", sou
 
 | 编号 | 任务 | 状态 | 实际改动文件 | 备注 |
 |---|---|---|---|---|
-| P1-1 | 把 retrieve/rerank/keyword/search 改造成 LangGraph Tool | todo | — | 重构 `app/agent/tools/` |
-| P1-2 | 引入 ReAct Agent，保留现有图为 quick path | todo | — | 新增 `react_agent.py` |
+| P1-1 | 把 retrieve/rerank/keyword/search 改造成 LangGraph Tool | done | `app/agent/tools/__init__.py`、`app/agent/tools/_common.py`（新增）、`app/agent/tools/keyword_tool.py`（新增）、`app/agent/tools/vector_tool.py`、`app/agent/tools/hybrid_tool.py`、`app/agent/tools/rerank_tool.py`、`app/services/hybrid_retrieval.py` | 双轨并存：纯函数（graph quick path 继续用）+ `make_xxx_tool`/`build_retrieval_tools` 工厂（P1-2 ReAct 用）；user_id 闭包绑定不进 tool schema 防越权；Tool 返回紧凑 JSON；新增 keyword_search 独立工具；4 工具均不调 LLM 无 token 消耗；冒烟全过 + 评估 20/20 持平基线（0.9/0.9/0.8） |
+| P1-2 | 引入 ReAct Agent，保留现有图为 quick path | done | `app/agent/react_agent.py`（新增）、`app/agent/routing.py`（新增）、`app/agent/graph.py`、`app/agent/state.py`、`app/agent/prompts.py`、`app/agent/nodes/classify_node.py`、`app/agent/nodes/fallback_node.py`、`app/agent/debug.py`、`app/agent/tools/__init__.py`、`app/agent/tools/_common.py`、`app/agent/tools/hybrid_tool.py`、`app/agent/tools/vector_tool.py`、`app/agent/tools/keyword_tool.py`、`app/agent/tools/rerank_tool.py`、`app/core/config.py`、`app/services/agent_stream_service.py` | 图内加节点方案：三层漏斗路由（规则脚本+LLM 前置保守升级 / expansion 后证据不足升级 / grounding 失败升级），`react_attempted` 护栏保证 ReAct 最多一次，ReAct 证据复用 quick path 统一答案合成（prompt_builder + generate_answer_with_usage）后过同一 grounding 门控；开关 `REACT_AGENT_ENABLED=False` 默认关闭零调用；SSE 发 deep_research 过渡事件；冒烟全过 + 开关关闭评估 20/20 持平基线（0.9/0.9/0.8、零升级） |
 | P1-3 | grade 分数 / fallback 率 / 延迟持久化到 DB | todo | — | 新增 `models/metric.py` |
 | P1-4 | 监控大盘 API（聚合指标查询） | todo | — | 新增 `routers/metrics.py` |
 | P1-5 | 文档索引切到 Celery + Redis broker | todo | — | 新增 `celery_app.py` + tasks |

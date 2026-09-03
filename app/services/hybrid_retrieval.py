@@ -144,6 +144,25 @@ def _keyword_recall(
     ]
 
 
+def keyword_recall(
+    query: str,
+    top_k: int = settings.TOP_K,
+    *,
+    user_id: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """
+    关键词/BM25 召回的 public 入口（P1-1：供 agent keyword_search_tool 使用）。
+
+    - 与 hybrid_retrieve 内部的 `_keyword_recall` 共用同一实现，不重复逻辑
+    - 仅做 L3 leaf chunk 的词法召回，不做向量融合/auto-merge
+    - user_id 非 None 时按租户过滤（P0-3）
+    """
+    q = (query or "").strip()
+    if not q:
+        return []
+    return _keyword_recall(q, top_k, user_id=user_id)
+
+
 def _merge_candidates(
     vector_results: List[Dict[str, Any]],
     keyword_results: List[Dict[str, Any]],

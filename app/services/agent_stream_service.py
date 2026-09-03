@@ -6,7 +6,7 @@ import time
 from typing import Any, Dict, Generator, List, Optional
 
 from app.agent.debug import build_agent_debug_summary
-from app.agent.graph import agent_graph
+from app.agent.graph import agent_graph, predict_react_upgrade
 from app.core.config import settings
 from app.schemas.rag_trace import create_rag_trace, record_timing, set_fallback_reason
 from app.services.agent_memory_service import (
@@ -64,6 +64,10 @@ def _step_payload(node_name: str, state: Dict[str, Any]) -> Dict[str, Any]:
         "reranked_count": len(state.get("reranked_docs") or []),
         "expanded_query_count": len(state.get("expanded_queries") or []),
         "evidence_grade": state.get("evidence_grade"),
+        # P1-2：ReAct 漏斗路由状态
+        "need_react": state.get("need_react", False),
+        "react_attempted": state.get("react_attempted", False),
+        "react_reason": state.get("react_reason"),
         "debug": {
             "classify_status": debug_info.get("classify_status"),
             "cache_status": debug_info.get("cache_status"),
@@ -73,6 +77,7 @@ def _step_payload(node_name: str, state: Dict[str, Any]) -> Dict[str, Any]:
             "answer_status": debug_info.get("answer_status"),
             "fallback_status": debug_info.get("fallback_status"),
             "grounding_status": debug_info.get("grounding_status"),
+            "react_status": debug_info.get("react_status"),
         },
     }
 
@@ -159,6 +164,19 @@ def stream_agent_chat_sse(
             node_name = _merge_graph_update(final_state, update)
             yield _sse("rag_step", _step_payload(node_name, final_state))
 
+            # P1-2：下一步将进入 ReAct 深度检索（多轮工具调用，耗时较长），
+            # 提前推送过渡事件，前端可展示"正在深度检索…"状态
+            if predict_react_upgrade(node_name, final_state):
+                yield _sse(
+                    "deep_research",
+                    {
+                        "status": "start",
+                        "from_node": node_name,
+                        "reason": final_state.get("react_reason"),
+                        "trace_id": rid,
+                    },
+                )
+
         final_answer = final_state.get("final_answer") or ""
         if final_answer:
             save_turn(
@@ -219,6 +237,10 @@ def stream_agent_chat_sse(
                 # P0-2：groundedness 校验结果随最终 trace 事件返回
                 "grounding_passed": final_state.get("grounding_passed"),
                 "grounding_reason": final_state.get("grounding_reason"),
+                # P1-2：ReAct 漏斗路由结果
+                "need_react": final_state.get("need_react", False),
+                "react_attempted": final_state.get("react_attempted", False),
+                "react_reason": final_state.get("react_reason"),
                 "debug_info": build_agent_debug_summary(final_state),
                 "rag_trace": rag_trace,
             },

@@ -93,5 +93,17 @@ class Settings(BaseSettings):
     LANGFUSE_PUBLIC_KEY: str = ""
     LANGFUSE_SECRET_KEY: str = ""
 
+    # =========================
+    # ReAct Agent Settings (P1-2)
+    # =========================
+    # 总开关：False 时三层漏斗路由全部走原 quick path，react_agent 节点零调用
+    # （与 LANGFUSE_ENABLED 同款灰度/回滚策略）
+    REACT_AGENT_ENABLED: bool = False
+    # create_react_agent 子图 recursion_limit（LangGraph super-step 计数，
+    # 每轮工具调用约 2 步；25 ≈ 最多 10 轮左右工具调用，防止 agent 无限检索）
+    REACT_RECURSION_LIMIT: int = 25
+    # ReAct 工具返回 JSON 中片段正文截断长度（quick path 纯函数不受影响）
+    REACT_TOOL_TEXT_LIMIT: int = 800
+
 
 settings = Settings()

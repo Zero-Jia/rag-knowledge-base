@@ -1,8 +1,11 @@
+import json
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.agent.state import AgentState
 from app.agent.prompts import CLASSIFY_SYSTEM_PROMPT
+from app.agent.routing import detect_complex_query
+from app.core.config import settings
 from app.schemas.rag_trace import record_token_usage
 from app.services.llm_service import generate_answer_with_usage
 
@@ -59,6 +62,37 @@ def _clean_label(text: str) -> str:
     return "kb_qa"
 
 
+def _parse_classify_output(raw: str) -> Tuple[str, bool]:
+    """
+    P1-2：解析 classify LLM 输出。
+
+    新格式为 JSON：{"route": "...", "need_react": bool, "reason": "..."}；
+    兼容旧格式（裸标签），解析失败时按旧逻辑清洗。
+    返回 (route_label, llm_need_react)。
+    """
+    text = (raw or "").strip()
+    if not text:
+        return "kb_qa", False
+
+    # 去掉可能的 markdown 代码块包裹
+    if text.startswith("```"):
+        text = text.strip("`").strip()
+        if text.lower().startswith("json"):
+            text = text[4:].strip()
+
+    try:
+        data = json.loads(text)
+        if isinstance(data, dict):
+            label = _clean_label(str(data.get("route", "")))
+            need_react = bool(data.get("need_react", False))
+            return label, need_react
+    except Exception:
+        pass
+
+    # 兜底：整段文本按裸标签处理（旧格式/模型未遵守 JSON 时）
+    return _clean_label(text), False
+
+
 def _rule_fallback(question: str, chat_history: List[Dict[str, str]]) -> str:
     """
     LLM失败 or 输出异常时的兜底策略
@@ -94,18 +128,28 @@ def classify_node(state: AgentState) -> AgentState:
     question = (state.get("question") or "").strip()
     chat_history = state.get("chat_history", [])
 
+    react_enabled = bool(getattr(settings, "REACT_AGENT_ENABLED", False))
+
     # ===== 1. 极少量强规则 =====
     if not question:
         state["route"] = "chat"
+        state["need_react"] = False
         debug_info["classify_status"] = "empty_question"
         state["debug_info"] = debug_info
         return state
 
     if _is_chat(question):
         state["route"] = "chat"
+        state["need_react"] = False
         debug_info["classify_status"] = "rule_chat"
         state["debug_info"] = debug_info
         return state
+
+    # P1-2：规则脚本前置路由（无论开关与否都计算，结果写入 debug 便于观测；
+    # 仅在开关开启时才实际影响路由）
+    rule_hit, rule_reason = detect_complex_query(question)
+    debug_info["complex_rule_hit"] = rule_hit
+    debug_info["complex_rule_reason"] = rule_reason or None
 
     # ===== 2. LLM 主分类 =====
     history_text = _get_recent_history_text(chat_history)
@@ -125,7 +169,7 @@ def classify_node(state: AgentState) -> AgentState:
     classify_start = time.time()
     try:
         llm_output, usage = generate_answer_with_usage(messages, temperature=0.0)
-        label = _clean_label(llm_output)
+        label, llm_need_react = _parse_classify_output(llm_output)
 
         # ===== 3. 轻量修正（关键）=====
         label = _light_post_fix(label, question, chat_history)
@@ -139,9 +183,22 @@ def classify_node(state: AgentState) -> AgentState:
             source="llm",
         )
 
+        # P1-2：前置升级判定 = 规则命中（硬信号）OR LLM 语义判定（软信号）
+        # 规则命中优先级最高，LLM 不能否决；开关关闭时不影响路由
+        react_reason: Optional[str] = None
+        if rule_hit:
+            react_reason = rule_reason
+        elif llm_need_react:
+            react_reason = "llm_complex"
+
         state["route"] = label
+        state["need_react"] = bool(react_enabled and react_reason is not None and label != "chat")
+        state["react_reason"] = react_reason
         debug_info["classify_status"] = "llm_main"
         debug_info["classify_raw_output"] = llm_output
+        debug_info["llm_need_react"] = llm_need_react
+        debug_info["need_react"] = state["need_react"]
+        debug_info["react_reason"] = react_reason
         state["debug_info"] = debug_info
         state["rag_trace"] = rag_trace
         return state
@@ -157,9 +214,15 @@ def classify_node(state: AgentState) -> AgentState:
             source="llm_error_fallback",
         )
 
+        # LLM 不可用时，规则脚本仍然生效（离线可用）
+        react_reason = rule_reason if rule_hit else None
         state["route"] = label
+        state["need_react"] = bool(react_enabled and react_reason is not None and label != "chat")
+        state["react_reason"] = react_reason
         debug_info["classify_status"] = "llm_failed_fallback"
         debug_info["classify_error"] = str(e)
+        debug_info["need_react"] = state["need_react"]
+        debug_info["react_reason"] = react_reason
 
         state["debug_info"] = debug_info
         state["rag_trace"] = rag_trace

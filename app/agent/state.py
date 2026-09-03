@@ -12,6 +12,13 @@ class AgentState(TypedDict, total=False):
 
     route: str
 
+    # P1-2 新增：三层漏斗路由 —— 是否前置升级 ReAct（规则命中 OR classify LLM 判定）
+    need_react: bool
+    # P1-2 新增：ReAct 链路是否已执行过（防循环护栏，保证 ReAct 最多执行一次）
+    react_attempted: bool
+    # P1-2 新增：升级 ReAct 的原因（rule_* / llm_complex / evidence_insufficient / grounding_failed_retry）
+    react_reason: Optional[str]
+
     cache_hit: bool
     cached_answer: Optional[str]
 
